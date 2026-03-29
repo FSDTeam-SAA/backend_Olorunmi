@@ -1,0 +1,58 @@
+import mongoose from "mongoose";
+
+const checklistSchema = new mongoose.Schema(
+  {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
+    option: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    workDate: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    checkInAt: {
+      type: Date,
+      default: Date.now,
+      required: true,
+    },
+    checkInLocation: {
+      latitude: { type: Number, required: true },
+      longitude: { type: Number, required: true },
+    },
+    checkOutAt: {
+      type: Date,
+      default: null,
+    },
+    checkOutLocation: {
+      latitude: { type: Number },
+      longitude: { type: Number },
+    },
+    checkOutType: {
+      type: String,
+      enum: ["manual", "auto", null],
+      default: null,
+    },
+    autoCheckoutTrigger: {
+      latitude: { type: Number },
+      longitude: { type: Number },
+      recordedAt: { type: Date },
+    },
+    status: {
+      type: String,
+      enum: ["checked_in", "checked_out"],
+      default: "checked_in",
+      index: true,
+    },
+  },
+  { timestamps: true },
+);
+
+export const Checklist = mongoose.model("Checklist", checklistSchema);
