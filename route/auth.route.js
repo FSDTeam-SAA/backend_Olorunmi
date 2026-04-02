@@ -18,6 +18,7 @@ router.post("/register", protect, isAdmin, register);
 router.post("/login", login);
 router.post("/verify", verifyEmail);
 router.post("/forget", forgetPassword);
+router.post("/forgot-password", forgetPassword);
 router.post("/verify-otp", verifyOTP);
 router.post("/reset-password", resetPassword);
 router.post("/change-password", protect, changePassword);

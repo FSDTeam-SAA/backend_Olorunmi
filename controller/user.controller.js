@@ -4,6 +4,15 @@ import { uploadOnCloudinary } from "../utils/commonMethod.js";
 import AppError from "../errors/AppError.js";
 import sendResponse from "../utils/sendResponse.js";
 import catchAsync from "../utils/catchAsync.js";
+import { Checklist } from "../model/checklist.model.js";
+import { Report } from "../model/report.model.js";
+
+const parsePagination = (query) => {
+  const page = Math.max(Number(query.page) || 1, 1);
+  const limit = Math.max(Number(query.limit) || 8, 1);
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+};
 
 // Get user profile
 export const getProfile = catchAsync(async (req, res) => {
@@ -24,7 +33,7 @@ export const getProfile = catchAsync(async (req, res) => {
 
 // Update profile
 export const updateProfile = catchAsync(async (req, res) => {
-  const { name, gender, dob, age, address } = req.body;
+  const { name, phone, bio, gender, dob, age, address } = req.body;
 
   const userId = req.user._id;
 
@@ -37,16 +46,19 @@ export const updateProfile = catchAsync(async (req, res) => {
   }
 
   // Update only provided fields
-  if (name) user.name = name;
-  if (gender) user.gender = gender;
-  if (dob) user.dob = dob;
-  if (age) user.age = age;
-  if (address) user.address = address;
-
-  console.log(req.file);
+  if (name !== undefined) user.name = name;
+  if (phone !== undefined) user.phone = phone;
+  if (bio !== undefined) user.bio = bio;
+  if (gender !== undefined) user.gender = gender;
+  if (dob !== undefined) user.dob = dob;
+  if (age !== undefined) user.age = age;
+  if (address !== undefined) user.address = address;
 
   if (req.file) {
     const result = await uploadOnCloudinary(req.file.buffer);
+    if (!user.avatar) {
+      user.avatar = { public_id: "", url: "" };
+    }
     user.avatar.public_id = result.public_id;
     user.avatar.url = result.secure_url;
   }
@@ -157,5 +169,146 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     success: true,
     message: "User created by admin successfully",
     data: responseUser,
+  });
+});
+
+export const getUsersForAdmin = catchAsync(async (req, res) => {
+  const { page, limit, skip } = parsePagination(req.query);
+  const searchTerm = req.query.search?.trim();
+
+  const filter = { role: { $ne: "admin" } };
+
+  if (searchTerm) {
+    filter.$or = [
+      { name: { $regex: searchTerm, $options: "i" } },
+      { userId: { $regex: searchTerm, $options: "i" } },
+    ];
+  }
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .select(
+        "-password -refreshToken -verificationInfo -password_reset_token -__v",
+      )
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    User.countDocuments(filter),
+  ]);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Users fetched successfully",
+    data: {
+      users,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(Math.ceil(total / limit), 1),
+      },
+    },
+  });
+});
+
+export const getUserDetailsForAdmin = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id).select(
+    "-password -refreshToken -verificationInfo -password_reset_token -__v",
+  );
+
+  if (!user) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  const [checklists, reports] = await Promise.all([
+    Checklist.find({ user: id }).sort({ createdAt: -1 }).limit(31),
+    Report.find({ user: id }).sort({ createdAt: -1 }).limit(20),
+  ]);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "User details fetched successfully",
+    data: {
+      user,
+      checklists,
+      reports,
+    },
+  });
+});
+
+export const updateUserByAdmin = catchAsync(async (req, res) => {
+  const { id } = req.params;
+  const { name, userId, password, latitude, longitude, defaultRadius } =
+    req.body;
+
+  const user = await User.findById(id);
+
+  if (!user) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  if (userId && userId !== user.userId) {
+    const existingUser = await User.findOne({ userId });
+    if (existingUser) {
+      throw new AppError(httpStatus.BAD_REQUEST, "userId already exists");
+    }
+    user.userId = userId;
+  }
+
+  if (name) user.name = name;
+  if (password) user.password = password;
+  if (defaultRadius !== undefined) user.defaultRadius = Number(defaultRadius);
+
+  if (latitude !== undefined && longitude !== undefined) {
+    user.location = {
+      latitude: Number(latitude),
+      longitude: Number(longitude),
+    };
+  }
+
+  if (req.file) {
+    const result = await uploadOnCloudinary(req.file.buffer);
+    user.avatar.public_id = result.public_id;
+    user.avatar.url = result.secure_url;
+  }
+
+  await user.save();
+
+  const responseUser = await User.findById(id).select(
+    "-password -refreshToken -verificationInfo -password_reset_token -__v",
+  );
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "User updated successfully",
+    data: responseUser,
+  });
+});
+
+export const deleteUserByAdmin = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+
+  if (!user) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  await Promise.all([
+    Checklist.deleteMany({ user: id }),
+    Report.deleteMany({ user: id }),
+    User.findByIdAndDelete(id),
+  ]);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "User deleted successfully",
+    data: null,
   });
 });

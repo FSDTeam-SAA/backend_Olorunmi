@@ -51,6 +51,16 @@ const checklistSchema = new mongoose.Schema(
       default: "checked_in",
       index: true,
     },
+    alertStatus: {
+      type: String,
+      enum: ["pending", "sent"],
+      default: "pending",
+      index: true,
+    },
+    alertSentAt: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true },
 );

@@ -291,13 +291,13 @@ export const changePassword = catchAsync(async (req, res) => {
 });
 
 export const refreshToken = catchAsync(async (req, res) => {
-  const { refreshToken } = req.body;
+  const refreshToken = req.body.refreshToken || req.cookies.refreshToken;
 
   if (!refreshToken) {
     throw new AppError(400, "Refresh token is required");
   }
 
-  const decoded = verifyToken(refreshToken, process.env.JWT_REFRESH_SECR);
+  const decoded = verifyToken(refreshToken, process.env.JWT_REFRESH_SECRET);
   const user = await User.findById(decoded._id);
   if (!user || user.refreshToken !== refreshToken) {
     throw new AppError(401, "Invalid refresh token");

@@ -1,10 +1,14 @@
 import express from "express";
 import {
+  createUserByAdmin,
   getProfile,
+  getUserDetailsForAdmin,
+  getUsersForAdmin,
   updateProfile,
   changePassword,
   deleteOwnAccount,
-  createUserByAdmin,
+  updateUserByAdmin,
+  deleteUserByAdmin,
 } from "../controller/user.controller.js";
 import { isAdmin, protect } from "../middleware/auth.middleware.js";
 import upload from "../middleware/multer.middleware.js";
@@ -27,5 +31,15 @@ router.post(
   upload.single("profilePhoto"),
   createUserByAdmin
 );
+router.get("/admin/list", protect, isAdmin, getUsersForAdmin);
+router.get("/admin/list/:id", protect, isAdmin, getUserDetailsForAdmin);
+router.patch(
+  "/admin/list/:id",
+  protect,
+  isAdmin,
+  upload.single("profilePhoto"),
+  updateUserByAdmin
+);
+router.delete("/admin/list/:id", protect, isAdmin, deleteUserByAdmin);
 
 export default router;
