@@ -14,6 +14,39 @@ const parsePagination = (query) => {
   return { page, limit, skip };
 };
 
+const parseCoordinate = (value, fieldName, min, max) => {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `${fieldName} must be a valid number`,
+    );
+  }
+
+  if (parsedValue < min || parsedValue > max) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `${fieldName} must be between ${min} and ${max}`,
+    );
+  }
+
+  return parsedValue;
+};
+
+const parseRadius = (value) => {
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "defaultRadius must be a positive number",
+    );
+  }
+
+  return parsedValue;
+};
+
 // Get user profile
 export const getProfile = catchAsync(async (req, res) => {
   const user = await User.findById(req.user._id).select(
@@ -126,7 +159,17 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
   const { name, userId, password, latitude, longitude, defaultRadius } =
     req.body;
 
-  if (!name || !userId || !password || latitude === undefined || longitude === undefined) {
+  if (
+    !name ||
+    !userId ||
+    !password ||
+    latitude === undefined ||
+    latitude === null ||
+    latitude === "" ||
+    longitude === undefined ||
+    longitude === null ||
+    longitude === ""
+  ) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
       "name, userId, password, latitude and longitude are required",
@@ -138,16 +181,19 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "userId already exists");
   }
 
+  const parsedLatitude = parseCoordinate(latitude, "latitude", -90, 90);
+  const parsedLongitude = parseCoordinate(longitude, "longitude", -180, 180);
+
   const userData = {
     name,
     userId,
     password,
     location: {
-      latitude: Number(latitude),
-      longitude: Number(longitude),
+      latitude: parsedLatitude,
+      longitude: parsedLongitude,
     },
     defaultRadius:
-      defaultRadius !== undefined ? Number(defaultRadius) : 100,
+      defaultRadius !== undefined ? parseRadius(defaultRadius) : 100,
     verificationInfo: { token: "", verified: true },
   };
 
@@ -261,17 +307,36 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
 
   if (name) user.name = name;
   if (password) user.password = password;
-  if (defaultRadius !== undefined) user.defaultRadius = Number(defaultRadius);
+  if (defaultRadius !== undefined) {
+    user.defaultRadius = parseRadius(defaultRadius);
+  }
 
-  if (latitude !== undefined && longitude !== undefined) {
+  const hasLatitude =
+    latitude !== undefined && latitude !== null && latitude !== "";
+  const hasLongitude =
+    longitude !== undefined && longitude !== null && longitude !== "";
+
+  if (hasLatitude !== hasLongitude) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "latitude and longitude must be provided together",
+    );
+  }
+
+  if (hasLatitude && hasLongitude) {
+    const parsedLatitude = parseCoordinate(latitude, "latitude", -90, 90);
+    const parsedLongitude = parseCoordinate(longitude, "longitude", -180, 180);
     user.location = {
-      latitude: Number(latitude),
-      longitude: Number(longitude),
+      latitude: parsedLatitude,
+      longitude: parsedLongitude,
     };
   }
 
   if (req.file) {
     const result = await uploadOnCloudinary(req.file.buffer);
+    if (!user.avatar) {
+      user.avatar = { public_id: "", url: "" };
+    }
     user.avatar.public_id = result.public_id;
     user.avatar.url = result.secure_url;
   }
