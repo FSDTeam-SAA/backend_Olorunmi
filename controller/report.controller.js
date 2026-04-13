@@ -5,7 +5,7 @@ import sendResponse from "../utils/sendResponse.js";
 import { Report } from "../model/report.model.js";
 
 export const createReport = catchAsync(async (req, res) => {
-  const { reportName, reportDescription } = req.body;
+  const { reportName, reportDescription,  } = req.body;
 
   if (!reportName || !reportDescription) {
     throw new AppError(
