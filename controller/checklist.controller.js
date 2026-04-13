@@ -4,6 +4,7 @@ import catchAsync from "../utils/catchAsync.js";
 import sendResponse from "../utils/sendResponse.js";
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
+import { Report } from "../model/report.model.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
 
@@ -24,6 +25,12 @@ const calculateDistanceInMeters = (lat1, lon1, lat2, lon2) => {
 };
 
 const getWorkDate = () => new Date().toISOString().slice(0, 10);
+const parsePagination = (query) => {
+  const page = Math.max(Number(query.page) || 1, 1);
+  const limit = Math.max(Number(query.limit) || 8, 1);
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+};
 
 export const trackChecklist = catchAsync(async (req, res) => {
   const { latitude, longitude, option } = req.body;
@@ -82,6 +89,8 @@ export const trackChecklist = catchAsync(async (req, res) => {
         longitude: lng,
         recordedAt: now,
       };
+      activeChecklist.alertStatus = "pending";
+      activeChecklist.alertSentAt = null;
       await activeChecklist.save();
 
       return sendResponse(res, {
@@ -173,6 +182,8 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
   activeChecklist.status = "checked_out";
   activeChecklist.checkOutAt = new Date();
   activeChecklist.checkOutType = "manual";
+  activeChecklist.alertStatus = "pending";
+  activeChecklist.alertSentAt = null;
   if (lat !== undefined && lng !== undefined) {
     activeChecklist.checkOutLocation = { latitude: lat, longitude: lng };
   }
@@ -197,5 +208,99 @@ export const getMyChecklists = catchAsync(async (req, res) => {
     success: true,
     message: "Checklist history fetched successfully",
     data: checklists,
+  });
+});
+
+export const getAdminAlerts = catchAsync(async (req, res) => {
+  const { page, limit, skip } = parsePagination(req.query);
+  const searchTerm = req.query.search?.trim();
+
+  const userFilter = {};
+  if (searchTerm) {
+    userFilter.$or = [
+      { name: { $regex: searchTerm, $options: "i" } },
+      { userId: { $regex: searchTerm, $options: "i" } },
+    ];
+  }
+
+  const users = await User.find(userFilter).select("_id");
+  const userIds = users.map((item) => item._id);
+
+  const checklistFilter = {
+    status: "checked_out",
+    checkOutType: "auto",
+  };
+
+  if (searchTerm) {
+    checklistFilter.user = { $in: userIds };
+  }
+
+  const [alerts, total] = await Promise.all([
+    Checklist.find(checklistFilter)
+      .populate("user", "name userId")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    Checklist.countDocuments(checklistFilter),
+  ]);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Alerts fetched successfully",
+    data: {
+      alerts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.max(Math.ceil(total / limit), 1),
+      },
+    },
+  });
+});
+
+export const sendAlertForChecklist = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  const checklist = await Checklist.findById(id).populate("user", "name userId");
+  if (!checklist) {
+    throw new AppError(httpStatus.NOT_FOUND, "Checklist not found");
+  }
+
+  checklist.alertStatus = "sent";
+  checklist.alertSentAt = new Date();
+  await checklist.save();
+
+  await Report.create({
+    user: checklist.user._id,
+    reportName: "Location Alert",
+    reportDescription:
+      "Admin sent an alert for going out of the assigned location zone.",
+  });
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Alert sent successfully",
+    data: checklist,
+  });
+});
+
+export const deleteAlertForChecklist = catchAsync(async (req, res) => {
+  const { id } = req.params;
+
+  const checklist = await Checklist.findById(id);
+  if (!checklist) {
+    throw new AppError(httpStatus.NOT_FOUND, "Checklist not found");
+  }
+
+  await checklist.deleteOne();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Alert deleted successfully",
+    data: null,
   });
 });

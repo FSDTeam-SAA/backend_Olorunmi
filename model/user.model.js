@@ -9,6 +9,7 @@ const userSchema = new Schema(
     password: { type: String, select: 0 },
     username: { type: String },
     phone: { type: String },
+    bio: { type: String, default: "" },
     credit: { type: Number, default: null },
     dob: { type: Date },
     gender: {
