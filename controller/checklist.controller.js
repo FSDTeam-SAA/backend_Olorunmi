@@ -5,6 +5,7 @@ import sendResponse from "../utils/sendResponse.js";
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
 import { Report } from "../model/report.model.js";
+import { sendPushNotification } from "../utils/sendPushNotification.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
 
@@ -92,6 +93,14 @@ export const trackChecklist = catchAsync(async (req, res) => {
       activeChecklist.alertStatus = "pending";
       activeChecklist.alertSentAt = null;
       await activeChecklist.save();
+
+      const user = await User.findOne({role: "admin"})
+
+      sendPushNotification(
+        [user._id],
+        "Auto Checkout Alert",
+        `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
+      );
 
       return sendResponse(res, {
         statusCode: httpStatus.OK,
