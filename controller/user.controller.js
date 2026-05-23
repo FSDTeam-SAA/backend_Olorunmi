@@ -129,6 +129,7 @@ export const changePassword = catchAsync(async (req, res) => {
   }
 
   user.password = newPassword;
+  user.textPassword = newPassword;
   await user.save();
 
   sendResponse(res, {
@@ -188,6 +189,7 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     name,
     userId,
     password,
+    textPassword: password,
     location: {
       latitude: parsedLatitude,
       longitude: parsedLongitude,
@@ -234,7 +236,7 @@ export const getUsersForAdmin = catchAsync(async (req, res) => {
   const [users, total] = await Promise.all([
     User.find(filter)
       .select(
-        "-password -refreshToken -verificationInfo -password_reset_token -__v",
+        "-password -refreshToken -verificationInfo -password_reset_token -__v +textPassword",
       )
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -262,7 +264,7 @@ export const getUserDetailsForAdmin = catchAsync(async (req, res) => {
   const { id } = req.params;
 
   const user = await User.findById(id).select(
-    "-password -refreshToken -verificationInfo -password_reset_token -__v",
+    "-password -refreshToken -verificationInfo -password_reset_token -__v +textPassword",
   );
 
   if (!user) {
@@ -306,7 +308,10 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
   }
 
   if (name) user.name = name;
-  if (password) user.password = password;
+  if (password) {
+    user.password = password;
+    user.textPassword = password;
+  }
   if (defaultRadius !== undefined) {
     user.defaultRadius = parseRadius(defaultRadius);
   }

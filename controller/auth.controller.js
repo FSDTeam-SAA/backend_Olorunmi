@@ -32,6 +32,7 @@ export const register = catchAsync(async (req, res) => {
     name,
     email,
     password,
+    textPassword: password,
     verificationInfo: { token: "", verified: true },
     location
   });
@@ -222,6 +223,7 @@ export const resetPassword = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "Invalid OTP");
   }
   user.password = password;
+  user.textPassword = password;
   await user.save();
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -281,6 +283,7 @@ export const changePassword = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
   user.password = newPassword;
+  user.textPassword = newPassword;
   await user.save();
   sendResponse(res, {
     statusCode: httpStatus.OK,
