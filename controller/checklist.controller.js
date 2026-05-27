@@ -139,6 +139,7 @@ const workDate = getWorkDate();
       workDate,
       // checkOutType = "auto";
       checkOutLocation : { latitude: lat, longitude: lng },
+      option : "check-in missed",
       // autoCheckoutTrigger = {
       //   latitude: lat,
       //   longitude: lng,
@@ -296,6 +297,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
   const check = await Checklist.create({
         user: req.user._id,
         status : "checked_out",
+        option : "manual checkout",
         checkOutAt : new Date(),
         workDate,
         checkOutType : "manual",
