@@ -186,14 +186,14 @@ const workDate = getWorkDate();
 
     // if (lastChecklist) {
   const lastCheckInTime = new Date(
-    lastChecklist.createdAt,
+    activeChecklist.createdAt,
   ).getTime();
 
   const currentTime = Date.now();
 
   const difference = currentTime - lastCheckInTime;
 
-  const NINETY_MINUTES = 90 * 60 * 1000;
+  const NINETY_MINUTES = 2 * 60 * 1000;
 
   if (difference < NINETY_MINUTES) {
     const remainingMinutes = Math.ceil(
@@ -296,7 +296,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
   const check = await Checklist.create({
         user: req.user._id,
         status : "checked_out",
-        checkOutAt : now,
+        checkOutAt : new Date(),
         workDate,
         checkOutType : "manual",
         checkOutLocation : { latitude: lat, longitude: lng },
@@ -321,6 +321,7 @@ const filter = {
 if (date) {
   filter.workDate = date;
 }
+console.log("Filter for fetching checklists:", filter);
 
 const checklists = await Checklist.find(filter).sort({
   createdAt: -1,

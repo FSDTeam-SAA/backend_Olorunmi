@@ -24,8 +24,8 @@ const checklistSchema = new mongoose.Schema(
       required: true,
     },
     checkInLocation: {
-      latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true },
+      latitude: { type: Number },
+      longitude: { type: Number},
     },
     checkOutAt: {
       type: Date,
