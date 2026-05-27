@@ -72,41 +72,42 @@ export const trackChecklist = catchAsync(async (req, res) => {
     user.location.latitude,
     user.location.longitude,
   );
-
+const workDate = getWorkDate();
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
+    workDate,
     status: "checked_in",
   }).sort({ checkInAt: -1 });
 
-const workDate = getWorkDate();
+
 
   if (activeChecklist) {
     if (distance > radius) {
       const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status = "checked_out";
-      checkOutAt = now;
-      workDate;
-      checkOutType = "auto";
-      checkOutLocation = { latitude: lat, longitude: lng };
-      autoCheckoutTrigger = {
+        status : "checked_out",
+      checkOutAt : now,
+      workDate,
+      checkOutType : "auto",
+      checkOutLocation : { latitude: lat, longitude: lng },
+      autoCheckoutTrigger : {
         latitude: lat,
         longitude: lng,
         recordedAt: now,
-      };
-      alertStatus = "pending";
-      alertSentAt = null;
+      },
+      alertStatus : "pending",
+      alertSentAt : null,
 
       })
 
-      const user = await User.findOne({role: "admin"})
+      // const user = await User.findOne({role: "admin"})
 
-      sendPushNotification(
-        [user._id],
-        "Auto Checkout Alert",
-        `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
-      );
+      // sendPushNotification(
+      //   [user._id],
+      //   "Auto Checkout Alert",
+      //   `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
+      // );
 
       const user = await User.findOne({role: "admin"})
 
@@ -133,18 +134,18 @@ const workDate = getWorkDate();
          const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status = "checked_in_missed";
+        status : "checked_in_missed",
       // checkOutAt = now;
-      workDate;
+      workDate,
       // checkOutType = "auto";
-      checkOutLocation = { latitude: lat, longitude: lng };
+      checkOutLocation : { latitude: lat, longitude: lng },
       // autoCheckoutTrigger = {
       //   latitude: lat,
       //   longitude: lng,
       //   recordedAt: now,
       // };
-      alertStatus = "pending";
-      alertSentAt = null;
+      alertStatus : "pending",
+      alertSentAt : null,
 
       })
 
@@ -159,7 +160,7 @@ const workDate = getWorkDate();
       return sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
-        message: "check in missed because user didnt reponse",
+        message: "check in missed because user didnt response",
         data: {
           action: "Check-in missed",
           distance,
@@ -294,11 +295,11 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
 
   const check = await Checklist.create({
         user: req.user._id,
-        status = "checked_out";
-      checkOutAt = now;
-      workDate;
-      checkOutType = "manual";
-      checkOutLocation = { latitude: lat, longitude: lng };
+        status : "checked_out",
+        checkOutAt : now,
+        workDate,
+        checkOutType : "manual",
+        checkOutLocation : { latitude: lat, longitude: lng },
 
       })
 
