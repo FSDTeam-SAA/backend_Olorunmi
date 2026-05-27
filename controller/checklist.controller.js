@@ -194,7 +194,7 @@ const workDate = getWorkDate();
 
   const difference = currentTime - lastCheckInTime;
 
-  const NINETY_MINUTES = 2 * 60 * 1000;
+  const NINETY_MINUTES = 90 * 60 * 1000;
 
   if (difference < NINETY_MINUTES) {
     const remainingMinutes = Math.ceil(
