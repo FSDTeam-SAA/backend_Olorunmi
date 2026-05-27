@@ -47,7 +47,7 @@ const checklistSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["checked_in", "checked_out"],
+      enum: ["checked_in", "checked_out","checked_in_missed"],
       default: "checked_in",
       index: true,
     },
