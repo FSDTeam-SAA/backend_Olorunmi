@@ -82,7 +82,7 @@ const workDate = getWorkDate();
 
 
   if (activeChecklist) {
-    if (distance > radius) {
+    if (distance > radius && option != "no") {
       const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
@@ -129,12 +129,13 @@ const workDate = getWorkDate();
         },
       });
     }
-    if(option === "no"){
+    if(option === "no" && distance > radius){
+      console.log("User did not respond to check-in prompt and is outside radius, marking as check-in missed.", option);
 
          const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status : "checked_in_missed",
+        status : option === "no"? "checked_in_missed" : "user_outside_radius",
       // checkOutAt = now;
       workDate,
       // checkOutType = "auto";
