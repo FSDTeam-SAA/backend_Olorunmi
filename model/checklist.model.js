@@ -24,8 +24,8 @@ const checklistSchema = new mongoose.Schema(
       required: true,
     },
     checkInLocation: {
-      latitude: { type: Number, required: true },
-      longitude: { type: Number, required: true },
+      latitude: { type: Number },
+      longitude: { type: Number},
     },
     checkOutAt: {
       type: Date,
@@ -47,7 +47,7 @@ const checklistSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["checked_in", "checked_out"],
+      enum: ["checked_in", "checked_out","checked_in_missed","user_outside_radius"],
       default: "checked_in",
       index: true,
     },
