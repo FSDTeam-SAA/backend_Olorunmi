@@ -364,9 +364,17 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   const users = await User.find(userFilter).select("_id");
   const userIds = users.map((item) => item._id);
 
-  const checklistFilter = {
-    status: { $in: ["checked_out", "checked_in_missed", "user_outside_radius"] },
-  };
+const checklistFilter = {
+  $or: [
+    {
+      status: "checked_out",
+      checkOutType: "auto", // 👈 checked_out হলে auto must
+    },
+    {
+      status: { $in: ["checked_in_missed", "user_outside_radius"] },
+    },
+  ],
+};
 
   if (searchTerm) {
     checklistFilter.user = { $in: userIds };
@@ -396,6 +404,20 @@ const result = await Checklist.aggregate([
   {
     $replaceRoot: {
       newRoot: "$checklist",
+    },
+  },
+    {
+    $lookup: {
+      from: "users", // collection name (must match MongoDB collection)
+      localField: "user",
+      foreignField: "_id",
+      as: "user",
+    },
+  },
+  {
+    $unwind: {
+      path: "$user",
+      preserveNullAndEmptyArrays: true,
     },
   },
   {
