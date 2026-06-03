@@ -76,7 +76,7 @@ const workDate = getWorkDate();
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
     workDate,
-    status: "checked_in",
+    status: { $in: ["checked_in", "checked_in_missed" ,"user_outside_radius"] },
   }).sort({ checkInAt: -1 });
 
 
