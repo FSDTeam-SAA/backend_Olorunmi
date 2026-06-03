@@ -82,6 +82,28 @@ const workDate = getWorkDate();
 
 
   if (activeChecklist) {
+      const lastCheckInTime = new Date(
+    activeChecklist.createdAt,
+  ).getTime();
+
+  const currentTime = Date.now();
+
+  const difference = currentTime - lastCheckInTime;
+
+  const NINETY_MINUTES = 90 * 60 * 1000;
+
+  if (difference < NINETY_MINUTES) {
+    const remainingMinutes = Math.ceil(
+      (NINETY_MINUTES - difference) / (1000 * 60),
+    );
+
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `You can check in again after ${remainingMinutes} minutes`,
+    );
+  }
+
+
     if (distance > radius && option != "no") {
       const now = new Date();
       const check = await Checklist.create({
@@ -129,18 +151,18 @@ const workDate = getWorkDate();
         },
       });
     }
-    if(option === "no" && distance > radius){
+    if(option === "no" ){
       console.log("User did not respond to check-in prompt and is outside radius, marking as check-in missed.", option);
 
          const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status : option === "no"? "checked_in_missed" : "user_outside_radius",
+        status : distance > radius ?"user_outside_radius": "checked_in_missed",
       // checkOutAt = now;
       workDate,
       // checkOutType = "auto";
       checkOutLocation : { latitude: lat, longitude: lng },
-      option : "check-in missed",
+      option :  distance > radius ?"user_outside_radius": "checked_in_missed",
       // autoCheckoutTrigger = {
       //   latitude: lat,
       //   longitude: lng,
@@ -187,26 +209,7 @@ const workDate = getWorkDate();
 
 
     // if (lastChecklist) {
-  const lastCheckInTime = new Date(
-    activeChecklist.createdAt,
-  ).getTime();
 
-  const currentTime = Date.now();
-
-  const difference = currentTime - lastCheckInTime;
-
-  const NINETY_MINUTES = 90 * 60 * 1000;
-
-  if (difference < NINETY_MINUTES) {
-    const remainingMinutes = Math.ceil(
-      (NINETY_MINUTES - difference) / (1000 * 60),
-    );
-
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      `You can check in again after ${remainingMinutes} minutes`,
-    );
-  }
 }
 
   if (distance > radius) {
