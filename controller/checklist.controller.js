@@ -323,15 +323,12 @@ export const getMyChecklists = catchAsync(async (req, res) => {
   const { date,user } = req.query;
 
   let filter = {};
-  if(req.user.role === "admin"){
-    if(user){
-      filter.user = user;
-    }
+  if(req.user.role === "admin" && user){
+    filter.user = user;
+  }else{
+    filter.user = req.user._id;
   }
 
- filter = {
-  user: req.user._id,
-};
 
 if (date) {
   filter.workDate = date;
