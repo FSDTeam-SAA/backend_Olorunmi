@@ -320,9 +320,16 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
 });
 
 export const getMyChecklists = catchAsync(async (req, res) => {
-  const { date } = req.query;
+  const { date,user } = req.query;
 
-const filter = {
+  let filter = {};
+  if(req.user.role === "admin"){
+    if(user){
+      filter.user = user;
+    }
+  }
+
+ filter = {
   user: req.user._id,
 };
 
