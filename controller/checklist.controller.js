@@ -370,14 +370,47 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     checklistFilter.user = { $in: userIds };
   }
 
-  const [alerts, total] = await Promise.all([
-    Checklist.find(checklistFilter)
-      .populate("user", "name userId")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit),
-    Checklist.countDocuments(checklistFilter),
-  ]);
+const result = await Checklist.aggregate([
+  {
+    $match: checklistFilter,
+  },
+  {
+    $sort: { createdAt: -1 },
+  },
+  {
+    $group: {
+      _id: {
+        user: "$user",
+        date: {
+          $dateToString: {
+            format: "%Y-%m-%d",
+            date: "$createdAt",
+          },
+        },
+      },
+      checklist: { $first: "$$ROOT" },
+    },
+  },
+  {
+    $replaceRoot: {
+      newRoot: "$checklist",
+    },
+  },
+  {
+    $facet: {
+      data: [
+        { $skip: skip },
+        { $limit: limit },
+      ],
+      total: [
+        { $count: "count" },
+      ],
+    },
+  },
+]);
+
+const alerts = result[0].data;
+const total = result[0].total[0]?.count || 0;
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
