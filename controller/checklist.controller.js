@@ -90,6 +90,8 @@ const workDate = getWorkDate();
 
   const difference = currentTime - lastCheckInTime;
 
+  console.log("Time since last check-in (ms):", difference);
+
   const NINETY_MINUTES = 90 * 60 * 1000;
 
   if (difference < NINETY_MINUTES) {
