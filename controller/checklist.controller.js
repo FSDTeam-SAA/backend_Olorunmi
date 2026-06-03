@@ -363,8 +363,7 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   const userIds = users.map((item) => item._id);
 
   const checklistFilter = {
-    status: "checked_out",
-    checkOutType: "auto",
+    status: { $in: ["checked_out", "checked_in_missed", "user_outside_radius"] },
   };
 
   if (searchTerm) {
