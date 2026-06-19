@@ -4,7 +4,7 @@ import catchAsync from "../utils/catchAsync.js";
 import sendResponse from "../utils/sendResponse.js";
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
-import { Report } from "../model/report.model.js";
+import { addDailyReportEntries } from "./report.controller.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
@@ -83,16 +83,15 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
 
 
-  if (activeChecklist && activeChecklist.status !== "checked_out" ) {
+  if (activeChecklist && activeChecklist.status !== "checked_out") {
     if (distance > radius && option != "no") {
       const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status: "checked_out",
+        status: "user_outside_radius",
         checkOutAt: now,
-        option: "auto checkout", 
+        option: "outside radius",
         workDate,
-        checkOutType: "auto",
         checkOutLocation: { latitude: lat, longitude: lng },
         autoCheckoutTrigger: {
           latitude: lat,
@@ -182,8 +181,18 @@ export const trackChecklist = catchAsync(async (req, res) => {
       sendPushNotification(
         [user._id],
         "Check In Missed Alert",
-        `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
+        `${req.user.name} have been marked as missed because ${req.user.name} moved outside the allowed radius.`,
       );
+      await addDailyReportEntries({
+        user: req.user._id,
+        date: workDate,
+        entries: [
+          {
+            description:
+              "Admin sent an alert for going out of the assigned location zone.",
+          },
+        ],
+      });
 
       return sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -368,10 +377,10 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     $or: [
       {
         status: "checked_out",
-        checkOutType: "auto", // 👈 checked_out হলে auto must
+        // checkOutType: "auto", // 👈 checked_out হলে auto must
       },
       {
-        status: { $in: ["checked_in_missed", "user_outside_radius"] },
+        status: { $in: ["checked_in_missed", "user_outside_radius", "checked_in"] },
       },
     ],
   };
@@ -380,58 +389,117 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     checklistFilter.user = { $in: userIds };
   }
 
+  // const result = await Checklist.aggregate([
+  //   {
+  //     $match: checklistFilter,
+  //   },
+  //   {
+  //     $sort: { createdAt: -1 },
+  //   },
+  //   {
+  //     $group: {
+  //       _id: {
+  //         user: "$user",
+  //         date: {
+  //           $dateToString: {
+  //             format: "%Y-%m-%d",
+  //             date: "$createdAt",
+  //           },
+  //         },
+  //       },
+  //       checklist: { $first: "$$ROOT" },
+  //     },
+  //   },
+  //   {
+  //     $replaceRoot: {
+  //       newRoot: "$checklist",
+  //     },
+  //   },
+  //   {
+  //     $lookup: {
+  //       from: "users", // collection name (must match MongoDB collection)
+  //       localField: "user",
+  //       foreignField: "_id",
+  //       as: "user",
+  //     },
+  //   },
+  //   {
+  //     $unwind: {
+  //       path: "$user",
+  //       preserveNullAndEmptyArrays: true,
+  //     },
+  //   },
+  //   {
+  //     $facet: {
+  //       data: [
+  //         { $skip: skip },
+  //         { $limit: limit },
+  //       ],
+  //       total: [
+  //         { $count: "count" },
+  //       ],
+  //     },
+  //   },
+  // ]);
+
   const result = await Checklist.aggregate([
-    {
-      $match: checklistFilter,
-    },
-    {
-      $sort: { createdAt: -1 },
-    },
-    {
-      $group: {
-        _id: {
-          user: "$user",
-          date: {
-            $dateToString: {
-              format: "%Y-%m-%d",
-              date: "$createdAt",
-            },
+  {
+    $match: checklistFilter,
+  },
+  {
+    $sort: { createdAt: -1 }, // latest document per user/day
+  },
+  {
+    $group: {
+      _id: {
+        user: "$user",
+        date: {
+          $dateToString: {
+            format: "%Y-%m-%d",
+            date: "$createdAt",
           },
         },
-        checklist: { $first: "$$ROOT" },
       },
+      checklist: { $first: "$$ROOT" },
     },
-    {
-      $replaceRoot: {
-        newRoot: "$checklist",
-      },
+  },
+  {
+    $replaceRoot: {
+      newRoot: "$checklist",
     },
-    {
-      $lookup: {
-        from: "users", // collection name (must match MongoDB collection)
-        localField: "user",
-        foreignField: "_id",
-        as: "user",
-      },
+  },
+
+  // Sort final grouped results
+  {
+    $sort: { createdAt: -1 },
+  },
+
+  {
+    $lookup: {
+      from: "users",
+      localField: "user",
+      foreignField: "_id",
+      as: "user",
     },
-    {
-      $unwind: {
-        path: "$user",
-        preserveNullAndEmptyArrays: true,
-      },
+  },
+  {
+    $unwind: {
+      path: "$user",
+      preserveNullAndEmptyArrays: true,
     },
-    {
-      $facet: {
-        data: [
-          { $skip: skip },
-          { $limit: limit },
-        ],
-        total: [
-          { $count: "count" },
-        ],
-      },
+  },
+  {
+    $facet: {
+      data: [
+        { $skip: skip },
+        { $limit: limit },
+      ],
+      total: [
+        { $count: "count" },
+      ],
     },
-  ]);
+  },
+]);
 
   const alerts = result[0].data;
   const total = result[0].total[0]?.count || 0;
@@ -464,12 +532,16 @@ export const sendAlertForChecklist = catchAsync(async (req, res) => {
   checklist.alertSentAt = new Date();
   await checklist.save();
 
-  await Report.create({
-    user: checklist.user._id,
-    reportName: "Location Alert",
-    reportDescription:
-      "Admin sent an alert for going out of the assigned location zone.",
-  });
+  // await addDailyReportEntries({
+  //   user: checklist.user._id,
+  //   date: checklist.workDate,
+  //   entries: [
+  //     {
+  //       description:
+  //         "Admin sent an alert for going out of the assigned location zone.",
+  //     },
+  //   ],
+  // });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
