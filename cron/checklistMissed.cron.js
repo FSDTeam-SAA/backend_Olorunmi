@@ -43,7 +43,7 @@ export const markMissedChecklists = async (now = new Date()) => {
 
   const activeCheckIns = await Checklist.find({
     workDate,
-    status: "checked_in",
+    status: ["checked_in", "re_checked_in"],
     createdAt: { $lte: cutoff },
   })
     .populate("user", "name")
@@ -82,7 +82,7 @@ export const markMissedChecklists = async (now = new Date()) => {
     const latestProgressChecklist = await Checklist.findOne({
       user: activeCheckIn.user._id,
       workDate,
-      status: { $in: ["checked_in", "checked_in_missed"] },
+      status: { $in: ["checked_in", "re_checked_in", "checked_in_missed"] },
       createdAt: { $gte: activeCheckIn.createdAt },
     }).sort({ createdAt: -1 });
 
