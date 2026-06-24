@@ -4,7 +4,7 @@ import catchAsync from "../utils/catchAsync.js";
 import sendResponse from "../utils/sendResponse.js";
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
-import { Report } from "../model/report.model.js";
+import { addDailyReportEntries } from "./report.controller.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
@@ -17,9 +17,9 @@ const calculateDistanceInMeters = (lat1, lon1, lat2, lon2) => {
   const a =
     Math.sin(dLat / 2) * Math.sin(dLat / 2) +
     Math.cos(toRadians(lat1)) *
-      Math.cos(toRadians(lat2)) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
+    Math.cos(toRadians(lat2)) *
+    Math.sin(dLon / 2) *
+    Math.sin(dLon / 2);
 
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return earthRadius * c;
@@ -72,56 +72,34 @@ export const trackChecklist = catchAsync(async (req, res) => {
     user.location.latitude,
     user.location.longitude,
   );
-const workDate = getWorkDate();
+  const workDate = getWorkDate();
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
     workDate,
-    status: { $in: ["checked_in", "checked_in_missed" ,"user_outside_radius"] },
+    // status: { $in: ["checked_in", "checked_in_missed", "user_outside_radius","re_checked_in", "checkedou"] },
   }).sort({ checkInAt: -1 });
 
+  console.log(activeChecklist, distance, radius, option);
 
 
-  if (activeChecklist) {
-      const lastCheckInTime = new Date(
-    activeChecklist.createdAt,
-  ).getTime();
 
-  const currentTime = Date.now();
-
-  const difference = currentTime - lastCheckInTime;
-
-  console.log("Time since last check-in (ms):", difference);
-
-  const NINETY_MINUTES = 90 * 60 * 1000;
-
-  if (difference < NINETY_MINUTES) {
-    const remainingMinutes = Math.ceil(
-      (NINETY_MINUTES - difference) / (1000 * 60),
-    );
-
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      `You can check in again after ${remainingMinutes} minutes`,
-    );
-  }
-
-
+  if (activeChecklist && activeChecklist.status !== "checked_out") {
     if (distance > radius && option != "no") {
       const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status : "checked_out",
-      checkOutAt : now,
-      workDate,
-      checkOutType : "auto",
-      checkOutLocation : { latitude: lat, longitude: lng },
-      autoCheckoutTrigger : {
-        latitude: lat,
-        longitude: lng,
-        recordedAt: now,
-      },
-      alertStatus : "pending",
-      alertSentAt : null,
+        status: "user_outside_radius",
+        checkOutAt: now,
+        option: "outside radius",
+        workDate,
+        checkOutLocation: { latitude: lat, longitude: lng },
+        autoCheckoutTrigger: {
+          latitude: lat,
+          longitude: lng,
+          recordedAt: now,
+        },
+        alertStatus: "pending",
+        alertSentAt: null,
 
       })
 
@@ -133,7 +111,7 @@ const workDate = getWorkDate();
       //   `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
       // );
 
-      const user = await User.findOne({role: "admin"})
+      const user = await User.findOne({ role: "admin" })
 
       sendPushNotification(
         [user._id],
@@ -153,35 +131,68 @@ const workDate = getWorkDate();
         },
       });
     }
-    if(option === "no" ){
+    const lastCheckInTime = new Date(
+      activeChecklist.createdAt,
+    ).getTime();
+
+    const currentTime = Date.now();
+
+    const difference = currentTime - lastCheckInTime;
+
+    console.log("Time since last check-in (ms):", difference);
+
+    const NINETY_MINUTES = 90 * 60 * 1000;
+
+    if (difference < NINETY_MINUTES) {
+      const remainingMinutes = Math.ceil(
+        (NINETY_MINUTES - difference) / (1000 * 60),
+      );
+
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        `You can check in again after ${remainingMinutes} minutes`,
+      );
+    }
+
+    if (option === "no") {
       console.log("User did not respond to check-in prompt and is outside radius, marking as check-in missed.", option);
 
-         const now = new Date();
+      const now = new Date();
       const check = await Checklist.create({
         user: req.user._id,
-        status : distance > radius ?"user_outside_radius": "checked_in_missed",
-      // checkOutAt = now;
-      workDate,
-      // checkOutType = "auto";
-      checkOutLocation : { latitude: lat, longitude: lng },
-      option :  distance > radius ?"user_outside_radius": "checked_in_missed",
-      // autoCheckoutTrigger = {
-      //   latitude: lat,
-      //   longitude: lng,
-      //   recordedAt: now,
-      // };
-      alertStatus : "pending",
-      alertSentAt : null,
+        status: distance > radius ? "user_outside_radius" : "checked_in_missed",
+        // checkOutAt = now;
+        workDate,
+        // checkOutType = "auto";
+        checkOutLocation: { latitude: lat, longitude: lng },
+        option: distance > radius ? "user_outside_radius" : "checked_in_missed",
+        // autoCheckoutTrigger = {
+        //   latitude: lat,
+        //   longitude: lng,
+        //   recordedAt: now,
+        // };
+        alertStatus: "pending",
+        alertSentAt: null,
 
       })
 
-      const user = await User.findOne({role: "admin"})
+      const user = await User.findOne({ role: "admin" })
 
       sendPushNotification(
         [user._id],
         "Check In Missed Alert",
-        `${req.user.name} have been automatically checked out because ${req.user.name} moved outside the allowed radius.`,
+        `${req.user.name} have been marked as missed because ${req.user.name} moved outside the allowed radius.`,
       );
+      await addDailyReportEntries({
+        user: req.user._id,
+        date: workDate,
+        entries: [
+          {
+            description:
+              "Admin sent an alert for going out of the assigned location zone.",
+          },
+        ],
+      });
 
       return sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -212,7 +223,7 @@ const workDate = getWorkDate();
 
     // if (lastChecklist) {
 
-}
+  }
 
   if (distance > radius) {
     throw new AppError(
@@ -234,20 +245,21 @@ const workDate = getWorkDate();
   // }
 
 
-  
 
-// Last checklist find
-// const lastChecklist = await Checklist.findOne({
-//   user: req.user._id,
-//   workDate
-// }).sort({ createdAt: -1 });
 
-// 90 minutes validation
+  // Last checklist find
+  // const lastChecklist = await Checklist.findOne({
+  //   user: req.user._id,
+  //   workDate
+  // }).sort({ createdAt: -1 });
+
+  // 90 minutes validation
 
 
   const checklist = await Checklist.create({
     user: req.user._id,
     option,
+    status: activeChecklist ? "re_checked_in" : "checked_in",
     workDate,
     checkInLocation: { latitude: lat, longitude: lng },
   });
@@ -301,15 +313,15 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
   // await activeChecklist.save();
 
   const check = await Checklist.create({
-        user: req.user._id,
-        status : "checked_out",
-        option : "manual checkout",
-        checkOutAt : new Date(),
-        workDate,
-        checkOutType : "manual",
-        checkOutLocation : { latitude: lat, longitude: lng },
+    user: req.user._id,
+    status: "checked_out",
+    option: "manual checkout",
+    checkOutAt: new Date(),
+    workDate,
+    checkOutType: "manual",
+    checkOutLocation: { latitude: lat, longitude: lng },
 
-      })
+  })
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -320,21 +332,20 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
 });
 
 export const getMyChecklists = catchAsync(async (req, res) => {
-  const { date,user } = req.query;
+  const { date, user } = req.query;
 
-  const filter = {};
-
-  // Admins may fetch another user's checklists by passing ?user=<id>.
-  // Everyone else (and admins without a user param) sees their own.
+  let filter = {};
   if (req.user.role === "admin" && user) {
     filter.user = user;
   } else {
     filter.user = req.user._id;
   }
 
+
   if (date) {
     filter.workDate = date;
   }
+  // console.log("Filter for fetching checklists:", filter);
 
   const checklists = await Checklist.find(filter).sort({
     createdAt: -1,
@@ -362,28 +373,81 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   const users = await User.find(userFilter).select("_id");
   const userIds = users.map((item) => item._id);
 
-const checklistFilter = {
-  $or: [
-    {
-      status: "checked_out",
-      checkOutType: "auto", // 👈 checked_out হলে auto must
-    },
-    {
-      status: { $in: ["checked_in_missed", "user_outside_radius"] },
-    },
-  ],
-};
+  const checklistFilter = {
+    $or: [
+      {
+        status: "checked_out",
+        // checkOutType: "auto", // 👈 checked_out হলে auto must
+      },
+      {
+        status: { $in: ["checked_in_missed", "user_outside_radius", "checked_in"] },
+      },
+    ],
+  };
 
   if (searchTerm) {
     checklistFilter.user = { $in: userIds };
   }
 
-const result = await Checklist.aggregate([
+  // const result = await Checklist.aggregate([
+  //   {
+  //     $match: checklistFilter,
+  //   },
+  //   {
+  //     $sort: { createdAt: -1 },
+  //   },
+  //   {
+  //     $group: {
+  //       _id: {
+  //         user: "$user",
+  //         date: {
+  //           $dateToString: {
+  //             format: "%Y-%m-%d",
+  //             date: "$createdAt",
+  //           },
+  //         },
+  //       },
+  //       checklist: { $first: "$$ROOT" },
+  //     },
+  //   },
+  //   {
+  //     $replaceRoot: {
+  //       newRoot: "$checklist",
+  //     },
+  //   },
+  //   {
+  //     $lookup: {
+  //       from: "users", // collection name (must match MongoDB collection)
+  //       localField: "user",
+  //       foreignField: "_id",
+  //       as: "user",
+  //     },
+  //   },
+  //   {
+  //     $unwind: {
+  //       path: "$user",
+  //       preserveNullAndEmptyArrays: true,
+  //     },
+  //   },
+  //   {
+  //     $facet: {
+  //       data: [
+  //         { $skip: skip },
+  //         { $limit: limit },
+  //       ],
+  //       total: [
+  //         { $count: "count" },
+  //       ],
+  //     },
+  //   },
+  // ]);
+
+  const result = await Checklist.aggregate([
   {
     $match: checklistFilter,
   },
   {
-    $sort: { createdAt: -1 },
+    $sort: { createdAt: -1 }, // latest document per user/day
   },
   {
     $group: {
@@ -404,9 +468,15 @@ const result = await Checklist.aggregate([
       newRoot: "$checklist",
     },
   },
-    {
+
+  // Sort final grouped results
+  {
+    $sort: { createdAt: -1 },
+  },
+
+  {
     $lookup: {
-      from: "users", // collection name (must match MongoDB collection)
+      from: "users",
       localField: "user",
       foreignField: "_id",
       as: "user",
@@ -431,8 +501,8 @@ const result = await Checklist.aggregate([
   },
 ]);
 
-const alerts = result[0].data;
-const total = result[0].total[0]?.count || 0;
+  const alerts = result[0].data;
+  const total = result[0].total[0]?.count || 0;
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -462,12 +532,16 @@ export const sendAlertForChecklist = catchAsync(async (req, res) => {
   checklist.alertSentAt = new Date();
   await checklist.save();
 
-  await Report.create({
-    user: checklist.user._id,
-    reportName: "Location Alert",
-    reportDescription:
-      "Admin sent an alert for going out of the assigned location zone.",
-  });
+  // await addDailyReportEntries({
+  //   user: checklist.user._id,
+  //   date: checklist.workDate,
+  //   entries: [
+  //     {
+  //       description:
+  //         "Admin sent an alert for going out of the assigned location zone.",
+  //     },
+  //   ],
+  // });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
