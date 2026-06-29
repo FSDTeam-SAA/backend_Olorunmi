@@ -208,6 +208,61 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
     }
 
+    if(option === "no_ok"){
+
+      console.log("User did not respond to check-in prompt and is outside radius, marking as check-in not OK.", option);
+
+      const now = new Date();
+      const check = await Checklist.create({
+        user: req.user._id,
+        status: distance > radius ? "user_outside_radius" : "checked_in_not_ok",
+        // checkOutAt = now;
+        workDate,
+        // checkOutType = "auto";
+        checkOutLocation: { latitude: lat, longitude: lng },
+        option: distance > radius ? "user_outside_radius" : "checked_in_not_ok",
+        // autoCheckoutTrigger = {
+        //   latitude: lat,
+        //   longitude: lng,
+        //   recordedAt: now,
+        // };
+        alertStatus: "pending",
+        alertSentAt: null,
+
+      })
+
+      const user = await User.findOne({ role: "admin" })
+
+      sendPushNotification(
+        [user._id],
+        "Check In Not OK Alert",
+        `${req.user.name} have been marked as not OK`,
+      );
+      await addDailyReportEntries({
+        user: req.user._id,
+        date: workDate,
+        entries: [
+          {
+            description:
+              "Check-in marked as not OK due to user response.",
+          },
+        ],
+      });
+
+      return sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Check-in marked as not OK due to user response.",
+        data: {
+          action: "Check-in not OK",
+          distance,
+          radius,
+          checklist: check,
+        },
+      });
+
+    }
+
     // return sendResponse(res, {
     //   statusCode: httpStatus.OK,
     //   success: true,

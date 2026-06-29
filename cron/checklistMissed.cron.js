@@ -2,7 +2,7 @@ import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
 
-const RESPONSE_INTERVAL_MS = 92 * 60 * 1000;
+const RESPONSE_INTERVAL_MS = 97 * 60 * 1000;
 const CRON_INTERVAL_MS = Number(process.env.CHECKLIST_MISSED_CRON_MS) ||  30*1000;
 
 const getWorkDate = (date = new Date()) => date.toISOString().slice(0, 10);
@@ -43,7 +43,7 @@ export const markMissedChecklists = async (now = new Date()) => {
 
   const activeCheckIns = await Checklist.find({
     workDate,
-    status: ["checked_in", "re_checked_in"],
+    status: ["checked_in", "re_checked_in", "checked_in_not_ok"],
     createdAt: { $lte: cutoff },
   })
     .populate("user", "name")
@@ -82,7 +82,7 @@ export const markMissedChecklists = async (now = new Date()) => {
     const latestProgressChecklist = await Checklist.findOne({
       user: activeCheckIn.user._id,
       workDate,
-      status: { $in: ["checked_in", "re_checked_in", "checked_in_missed"] },
+      status: { $in: ["checked_in", "re_checked_in", "checked_in_not_ok"] },
       createdAt: { $gte: activeCheckIn.createdAt },
     }).sort({ createdAt: -1 });
 
