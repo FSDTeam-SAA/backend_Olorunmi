@@ -69,6 +69,13 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "PDF file is required");
   }
 
+  console.log("PDF file received:", {
+    originalname: pdf.originalname,
+    mimetype: pdf.mimetype,
+    size: pdf.size,
+  });
+  console.log("Request body:", req.body);
+
   const isPdf =
     pdf.mimetype === "application/pdf" ||
     pdf.originalname?.toLowerCase().endsWith(".pdf");
