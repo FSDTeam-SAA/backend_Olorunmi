@@ -9,10 +9,22 @@ import {
   updateReportByDate,
 } from "../controller/report.controller.js";
 import { isAdmin, protect } from "../middleware/auth.middleware.js";
+import { sendReportPdfEmail } from "../controller/reportEmail.controller.js";
 import upload from "../middleware/multer.middleware.js";
 
 const router = express.Router();
 
+
+router.post(
+  "/send-pdf",
+  protect,
+  upload.fields([
+    { name: "pdf", maxCount: 1 },
+    { name: "file", maxCount: 1 },
+    { name: "reportPdf", maxCount: 1 },
+  ]),
+  sendReportPdfEmail,
+);
 router.post("/", protect, upload.array("images", 10), createReport);
 router.patch(
   "/date/:reportDate",

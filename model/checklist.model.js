@@ -45,9 +45,13 @@ const checklistSchema = new mongoose.Schema(
       longitude: { type: Number },
       recordedAt: { type: Date },
     },
+    missedResponseFor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Checklist",
+    },
     status: {
       type: String,
-      enum: ["checked_in", "checked_out","checked_in_missed","user_outside_radius", "re_checked_in"],
+      enum: ["checked_in", "checked_out","checked_in_missed","user_outside_radius", "re_checked_in","checked_in_not_ok"],
       default: "checked_in",
       index: true,
     },
@@ -63,6 +67,14 @@ const checklistSchema = new mongoose.Schema(
     },
   },
   { timestamps: true },
+);
+
+checklistSchema.index(
+  { missedResponseFor: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { missedResponseFor: { $type: "objectId" } },
+  },
 );
 
 export const Checklist = mongoose.model("Checklist", checklistSchema);
