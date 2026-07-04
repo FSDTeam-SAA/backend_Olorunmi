@@ -1,5 +1,6 @@
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
+import { addDailyReportEntries } from "../controller/report.controller.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
 
 const RESPONSE_INTERVAL_MS = 97 * 60 * 1000;
@@ -18,9 +19,10 @@ const getDueMissedTimes = (fromDate, now) => {
 };
 
 const getLatestKnownLocation = (checklist) => {
-  const location = typeof checklist.checkOutLocation?.latitude === "number"
-    ? checklist.checkOutLocation
-    : checklist.checkInLocation;
+  const location =
+    typeof checklist.checkOutLocation?.latitude === "number"
+      ? checklist.checkOutLocation
+      : checklist.checkInLocation;
 
   if (
     typeof location?.latitude === "number" &&
@@ -35,6 +37,62 @@ const getLatestKnownLocation = (checklist) => {
   return undefined;
 };
 
+const notifyAdmins = async (title, message) => {
+  const admins = await User.find({ role: "admin" }).select("_id");
+  const adminIds = admins.map((admin) => admin._id);
+  if (!adminIds.length) return;
+  await sendPushNotification(adminIds, title, message);
+};
+
+const createMissedChecklist = async ({ activeCheckIn, dueAt, workDate }) => {
+  const checkOutLocation = getLatestKnownLocation(activeCheckIn);
+  const result = await Checklist.findOneAndUpdate(
+    { missedResponseFor: activeCheckIn._id },
+    {
+      $setOnInsert: {
+        user: activeCheckIn.user._id,
+        status: "checked_in_missed",
+        workDate,
+        option: "checked_in_missed",
+        checkInAt: dueAt,
+        missedResponseFor: activeCheckIn._id,
+        ...(checkOutLocation ? { checkOutLocation } : {}),
+        alertStatus: "pending",
+        alertSentAt: null,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
+      includeResultMetadata: true,
+    },
+  );
+
+  const checklist = result.value;
+  const created = result.lastErrorObject?.updatedExisting === false;
+  if (result.lastErrorObject?.updatedExisting) {
+    return { checklist, created: false };
+  }
+
+  await notifyAdmins(
+    "Check In Missed Alert",
+    `${activeCheckIn.user.name || "A user"} missed the check-in prompt.`,
+  );
+  await addDailyReportEntries({
+    user: activeCheckIn.user._id,
+    date: workDate,
+    entries: [
+      {
+        description: "User missed the check-in prompt.",
+      },
+    ],
+  });
+
+  return { checklist, created };
+};
+
 export const markMissedChecklists = async (now = new Date()) => {
   const cutoff = new Date(now.getTime() - RESPONSE_INTERVAL_MS);
 
@@ -45,15 +103,10 @@ export const markMissedChecklists = async (now = new Date()) => {
     .populate("user", "name")
     .sort({ createdAt: -1 });
 
-  console.log(`Found ${activeCheckIns.length} active check-ins that may have missed response.`);
-
-  const admins = await User.find({ role: "admin" }).select("_id");
-  const adminIds = admins.map((admin) => admin._id);
-
   let createdCount = 0;
   const processedUsers = new Set();
 
-  for (const activeCheckIn of activeCheckIns) {
+  for (const activeCheckIn of dueResponses) {
     if (!activeCheckIn.user?._id) {
       continue;
     }
@@ -80,49 +133,35 @@ export const markMissedChecklists = async (now = new Date()) => {
     const latestProgressChecklist = await Checklist.findOne({
       user: activeCheckIn.user._id,
       workDate,
-      status: { $in: ["checked_in", "re_checked_in", "checked_in_not_ok"] },
-      createdAt: { $gte: activeCheckIn.createdAt },
     }).sort({ createdAt: -1 });
 
-    if (!latestProgressChecklist || latestProgressChecklist.createdAt > cutoff) {
+    if (
+      !latestChecklist ||
+      latestChecklist._id.toString() !== activeCheckIn._id.toString()
+    ) {
       continue;
     }
 
-    const dueMissedTimes = getDueMissedTimes(latestProgressChecklist.createdAt, now);
-    if (!dueMissedTimes.length) {
+    const dueAt = new Date(
+      activeCheckIn.createdAt.getTime() + MISSED_RESPONSE_DUE_MS,
+    );
+    if (dueAt > now) {
       continue;
     }
 
-    const checkOutLocation = getLatestKnownLocation(latestProgressChecklist);
-    const missedChecklistPayloads = dueMissedTimes.map((dueAt) => ({
-      user: activeCheckIn.user._id,
-      status: "checked_in_missed",
+    const { created } = await createMissedChecklist({
+      activeCheckIn,
+      dueAt,
       workDate,
-      option: "checked_in_missed",
-      checkInAt: dueAt,
-      ...(checkOutLocation ? { checkOutLocation } : {}),
-      alertStatus: "pending",
-      alertSentAt: null,
-      createdAt: dueAt,
-      updatedAt: dueAt,
-    }));
-
-    const missedChecklists = await Checklist.insertMany(missedChecklistPayloads, {
-      timestamps: false,
     });
-
-    createdCount += missedChecklists.length;
-
-    if (adminIds.length) {
-      await sendPushNotification(
-        adminIds,
-        "Check In Missed Alert",
-        `${activeCheckIn.user.name || "A user"} missed ${missedChecklists.length} check-in prompt(s).`,
-      );
+    if (!created) {
+      continue;
     }
+
+    createdCount += 1;
 
     console.log(
-      `Created ${missedChecklists.length} missed checklist record(s) for user ${activeCheckIn.user._id}`,
+      `Created one missed checklist record for user ${activeCheckIn.user._id}`,
     );
   }
 
@@ -130,6 +169,11 @@ export const markMissedChecklists = async (now = new Date()) => {
 };
 
 export const startChecklistMissedCron = () => {
+  if (process.env.DISABLE_CHECKLIST_MISSED_CRON === "true") {
+    console.log("Checklist missed cron disabled by environment.");
+    return null;
+  }
+
   let isRunning = false;
 
   const run = async () => {
@@ -139,7 +183,6 @@ export const startChecklistMissedCron = () => {
 
     isRunning = true;
     try {
-      console.log("Running checklist missed cron...");
       const createdCount = await markMissedChecklists();
       if (createdCount) {
         console.log(`Checklist missed cron created ${createdCount} record(s).`);
