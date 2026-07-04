@@ -30,17 +30,23 @@ const getUploadedReportPdf = (files) => {
   return files.pdf?.[0] || files.file?.[0] || files.reportPdf?.[0] || null;
 };
 
-const buildReportPdfEmailTemplate = ({ recipientName, message, senderName }) => {
-  const safeRecipientName = escapeHtml(recipientName);
+const buildReportPdfEmailTemplate = ({ message, senderName, fromEmail }) => {
   const safeMessage = escapeHtml(message).replace(/\r?\n/g, "<br />");
-  const safeSenderName = escapeHtml(senderName || "The team");
+  const safeSenderName = escapeHtml(senderName || "Unknown user");
+  const safeFromEmail = escapeHtml(fromEmail || "Not provided");
 
   return `
     <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.5;">
-      <p>Hello ${safeRecipientName},</p>
+      <p>Hello,</p>
+      <p>A daily log report has been sent by:</p>
+      <p>
+        <strong>Name:</strong> ${safeSenderName}<br />
+        <strong>From Email:</strong> ${safeFromEmail}
+      </p>
+      <p><strong>Message:</strong></p>
       <div>${safeMessage}</div>
-      <p>Please find the attached PDF report.</p>
-      <p>Regards,<br />${safeSenderName}</p>
+      <p>Please find the report PDF attached.</p>
+      <p>Thank you.</p>
     </div>
   `;
 };
@@ -49,8 +55,18 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
   const recipientName =
     req.body.recipientName || req.body.recipient_name || req.body.name;
   const recipientEmail =
-    req.body.recipientEmail || req.body.recipient_email || req.body.email;
-  const message = req.body.message;
+    req.body.recipientEmail ||
+    req.body.recipient_email ||
+    req.body.toEmail ||
+    req.body.to_email ||
+    req.body.email;
+  const message = req.body.body || req.body.message;
+  const fromEmail = req.body.fromEmail || req.body.from_email;
+  const senderName =
+    req.body.senderName ||
+    req.body.sender_name ||
+    req.user?.name ||
+    req.user?._id;
   const subject = req.body.subject || "Report PDF";
   const pdf = getUploadedReportPdf(req.files);
 
@@ -63,6 +79,10 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
 
   if (!isEmail(recipientEmail)) {
     throw new AppError(httpStatus.BAD_REQUEST, "Invalid recipientEmail");
+  }
+
+  if (fromEmail && !isEmail(fromEmail)) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Invalid fromEmail");
   }
 
   if (!pdf) {
@@ -88,12 +108,24 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
     recipientEmail,
     subject,
     buildReportPdfEmailTemplate({
-      recipientName,
       message,
-      senderName: req.user?.name,
+      senderName,
+      fromEmail,
     }),
     {
-      text: message,
+      text: `Hello,
+
+A daily log report has been sent by:
+
+Name: ${senderName || "Unknown user"}
+From Email: ${fromEmail || "Not provided"}
+
+Message:
+${message}
+
+Please find the report PDF attached.
+
+Thank you.`,
       attachments: [
         {
           filename: pdf.originalname || "report.pdf",
@@ -111,6 +143,8 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
     data: {
       recipientName,
       recipientEmail,
+      senderName,
+      fromEmail,
       fileName: pdf.originalname || "report.pdf",
     },
   });
