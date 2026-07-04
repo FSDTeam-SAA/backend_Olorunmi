@@ -5,8 +5,6 @@ import { sendPushNotification } from "../utils/sendPushNotification.js";
 const RESPONSE_INTERVAL_MS = 97 * 60 * 1000;
 const CRON_INTERVAL_MS = Number(process.env.CHECKLIST_MISSED_CRON_MS) ||  30*1000;
 
-const getWorkDate = (date = new Date()) => date.toISOString().slice(0, 10);
-
 const getDueMissedTimes = (fromDate, now) => {
   const dueTimes = [];
   let nextDueAt = new Date(fromDate.getTime() + RESPONSE_INTERVAL_MS);
@@ -38,12 +36,10 @@ const getLatestKnownLocation = (checklist) => {
 };
 
 export const markMissedChecklists = async (now = new Date()) => {
-  const workDate = getWorkDate(now);
   const cutoff = new Date(now.getTime() - RESPONSE_INTERVAL_MS);
 
   const activeCheckIns = await Checklist.find({
-    workDate,
-    status: ["checked_in", "re_checked_in", "checked_in_not_ok"],
+    status: { $in: ["checked_in", "re_checked_in", "checked_in_not_ok"] },
     createdAt: { $lte: cutoff },
   })
     .populate("user", "name")
@@ -67,6 +63,8 @@ export const markMissedChecklists = async (now = new Date()) => {
       continue;
     }
     processedUsers.add(userId);
+
+    const workDate = activeCheckIn.workDate;
 
     const checkoutAfterCheckIn = await Checklist.findOne({
       user: activeCheckIn.user._id,

@@ -6,6 +6,7 @@ import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
 import { addDailyReportEntries } from "./report.controller.js";
 import { sendPushNotification } from "../utils/sendPushNotification.js";
+import { getRequestDateContext } from "../utils/dateTime.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
 
@@ -25,7 +26,6 @@ const calculateDistanceInMeters = (lat1, lon1, lat2, lon2) => {
   return earthRadius * c;
 };
 
-const getWorkDate = () => new Date().toISOString().slice(0, 10);
 const parsePagination = (query) => {
   const page = Math.max(Number(query.page) || 1, 1);
   const limit = Math.max(Number(query.limit) || 8, 1);
@@ -72,7 +72,8 @@ export const trackChecklist = catchAsync(async (req, res) => {
     user.location.latitude,
     user.location.longitude,
   );
-  const workDate = getWorkDate();
+  const dateContext = getRequestDateContext(req);
+  const { workDate, now } = dateContext;
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
     workDate,
@@ -85,7 +86,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
   if (activeChecklist && activeChecklist.status !== "checked_out") {
     if (distance > radius && option != "no") {
-      const now = new Date();
+      const now = dateContext.now;
       const check = await Checklist.create({
         user: req.user._id,
         status: "user_outside_radius",
@@ -132,10 +133,10 @@ export const trackChecklist = catchAsync(async (req, res) => {
       });
     }
     const lastCheckInTime = new Date(
-      activeChecklist.createdAt,
+      activeChecklist.checkInAt || activeChecklist.createdAt,
     ).getTime();
 
-    const currentTime = Date.now();
+    const currentTime = now.getTime();
 
     const difference = currentTime - lastCheckInTime;
 
@@ -157,7 +158,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     if (option === "no") {
       console.log("User did not respond to check-in prompt and is outside radius, marking as check-in missed.", option);
 
-      const now = new Date();
+      const now = dateContext.now;
       const check = await Checklist.create({
         user: req.user._id,
         status: distance > radius ? "user_outside_radius" : "checked_in_missed",
@@ -183,16 +184,6 @@ export const trackChecklist = catchAsync(async (req, res) => {
         "Check In Missed Alert",
         `${req.user.name} have been marked as missed because ${req.user.name} moved outside the allowed radius.`,
       );
-      await addDailyReportEntries({
-        user: req.user._id,
-        date: workDate,
-        entries: [
-          {
-            description:
-              "Admin sent an alert for going out of the assigned location zone.",
-          },
-        ],
-      });
 
       return sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -212,7 +203,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
       console.log("User did not respond to check-in prompt and is outside radius, marking as check-in not OK.", option);
 
-      const now = new Date();
+      const now = dateContext.now;
       const check = await Checklist.create({
         user: req.user._id,
         status: distance > radius ? "user_outside_radius" : "checked_in_not_ok",
@@ -238,16 +229,6 @@ export const trackChecklist = catchAsync(async (req, res) => {
         "Check In Not OK Alert",
         `${req.user.name} have been marked as not OK`,
       );
-      await addDailyReportEntries({
-        user: req.user._id,
-        date: workDate,
-        entries: [
-          {
-            description:
-              "Check-in marked as not OK due to user response.",
-          },
-        ],
-      });
 
       return sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -316,7 +297,22 @@ export const trackChecklist = catchAsync(async (req, res) => {
     option,
     status: activeChecklist ? "re_checked_in" : "checked_in",
     workDate,
+    checkInAt: now,
     checkInLocation: { latitude: lat, longitude: lng },
+  });
+
+  await addDailyReportEntries({
+    user: req.user._id,
+    date: workDate,
+    day: dateContext.day,
+    entries: [
+      {
+        time: dateContext.time,
+        description: activeChecklist ? "Checked in again." : "Checked in.",
+      },
+    ],
+    source: dateContext.source,
+    defaultTime: dateContext.time,
   });
 
   return sendResponse(res, {
@@ -344,11 +340,12 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "Invalid latitude/longitude");
   }
 
-  const workDate = getWorkDate();
+  const dateContext = getRequestDateContext(req);
+  const { workDate, now } = dateContext;
 
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
-    status: "checked_in",
+    status: { $in: ["checked_in", "re_checked_in"] },
     workDate
   }).sort({ checkInAt: -1 });
 
@@ -371,12 +368,26 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
     user: req.user._id,
     status: "checked_out",
     option: "manual checkout",
-    checkOutAt: new Date(),
+    checkOutAt: now,
     workDate,
     checkOutType: "manual",
     checkOutLocation: { latitude: lat, longitude: lng },
 
-  })
+  });
+
+  await addDailyReportEntries({
+    user: req.user._id,
+    date: workDate,
+    day: dateContext.day,
+    entries: [
+      {
+        time: dateContext.time,
+        description: "Checked out.",
+      },
+    ],
+    source: dateContext.source,
+    defaultTime: dateContext.time,
+  });
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -508,12 +519,7 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     $group: {
       _id: {
         user: "$user",
-        date: {
-          $dateToString: {
-            format: "%Y-%m-%d",
-            date: "$createdAt",
-          },
-        },
+        date: "$workDate",
       },
       checklist: { $first: "$$ROOT" },
     },

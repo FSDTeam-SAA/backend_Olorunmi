@@ -6,6 +6,12 @@ import AppError from "../errors/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import sendResponse from "../utils/sendResponse.js";
 import { Report } from "../model/report.model.js";
+import {
+  getCurrentUtcTime,
+  getRequestDateContext,
+  getRequestDateSource,
+  getUserDateInfo,
+} from "../utils/dateTime.js";
 
 const reportUploadDir = path.join(process.cwd(), "public", "report-images");
 
@@ -16,31 +22,9 @@ const parsePagination = (query) => {
   return { page, limit, skip };
 };
 
-const getDateInfo = (value) => {
-  const rawDate = value || new Date();
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(rawDate))
-    ? new Date(`${rawDate}T00:00:00.000Z`)
-    : new Date(rawDate);
+const getDateInfo = (value, source = {}) => getUserDateInfo(value, source);
 
-  if (Number.isNaN(date.getTime())) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Invalid report date");
-  }
-
-  const reportDate = date.toISOString().slice(0, 10);
-  const day = date.toLocaleDateString("en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  });
-
-  return { reportDate, day };
-};
-
-const getCurrentTime = () => {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, "0")}:${String(
-    now.getMinutes(),
-  ).padStart(2, "0")}`;
-};
+const getCurrentTime = () => getCurrentUtcTime();
 
 const parseJsonArray = (value, fieldName) => {
   if (Array.isArray(value)) {
@@ -121,12 +105,12 @@ const saveReportImages = async (files = []) => {
   );
 };
 
-const buildEntries = (body, uploadedImages) => {
+const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
   let entries = [];
 
   if (body.entries !== undefined) {
     entries = parseJsonArray(body.entries, "entries").map((entry) => ({
-      time: entry.time || getCurrentTime(),
+      time: entry.time || defaultTime,
       description: entry.description,
       images: [],
     }));
@@ -135,7 +119,7 @@ const buildEntries = (body, uploadedImages) => {
     if (description) {
       entries = [
         {
-          time: body.time || getCurrentTime(),
+          time: body.time || defaultTime,
           description,
           images: [],
         },
@@ -245,7 +229,10 @@ const getReportForUpdateById = async (req) => {
 };
 
 const getReportForUpdateByDate = async (req) => {
-  const { reportDate } = getDateInfo(req.params.reportDate);
+  const { reportDate } = getDateInfo(
+    req.params.reportDate,
+    getRequestDateSource(req),
+  );
   const user =
     req.user.role === "admin" && req.query.user ? req.query.user : req.user._id;
 
@@ -345,7 +332,7 @@ const updateReportDocument = async (req, report) => {
 
   let newEntries = [];
   if (!targetEntry && willAppendEntries) {
-    newEntries = buildEntries(req.body, []);
+    newEntries = buildEntries(req.body, [], getRequestDateContext(req).time);
   }
 
   const uploadedImages = await saveReportImages(req.files);
@@ -383,13 +370,15 @@ export const addDailyReportEntries = async ({
   day,
   header = {},
   entries = [],
+  source = {},
+  defaultTime,
 }) => {
-  const dateInfo = getDateInfo(date);
+  const dateInfo = getDateInfo(date, source);
   const reportDate = dateInfo.reportDate;
   const reportDay = day || dateInfo.day;
   const normalizedEntries = entries.map((entry) => ({
     ...entry,
-    time: entry.time || getCurrentTime(),
+    time: entry.time || defaultTime || getCurrentTime(),
     images: entry.images || [],
   }));
 
@@ -495,7 +484,8 @@ export const deleteReportEntryByDate = catchAsync(async (req, res) => {
 
 export const createReport = catchAsync(async (req, res) => {
   const uploadedImages = await saveReportImages(req.files);
-  const entries = buildEntries(req.body, uploadedImages);
+  const dateContext = getRequestDateContext(req);
+  const entries = buildEntries(req.body, uploadedImages, dateContext.time);
   const header = buildHeaderUpdate(req.body);
 
   if (!entries.length && !Object.keys(header).length) {
@@ -511,6 +501,8 @@ export const createReport = catchAsync(async (req, res) => {
     day: req.body.day,
     header,
     entries,
+    source: dateContext.source,
+    defaultTime: dateContext.time,
   });
 
   return sendResponse(res, {
