@@ -138,15 +138,6 @@ const createMissedRecord = async ({
     "Check In Missed Alert",
     `${userName} missed the check-in prompt.`,
   );
-  await addDailyReportEntries({
-    user: userId,
-    date: workDate,
-    entries: [
-      {
-        description: "User missed the check-in prompt.",
-      },
-    ],
-  });
 
   return checklist;
 };
@@ -166,15 +157,6 @@ const createNotOkRecord = async ({ userId, userName, workDate, lat, lng }) => {
     "Check In Not OK Alert",
     `${userName} have been marked as not OK`,
   );
-  await addDailyReportEntries({
-    user: userId,
-    date: workDate,
-    entries: [
-      {
-        description: "Check-in marked as not OK due to user response.",
-      },
-    ],
-  });
 
   return checklist;
 };
@@ -481,7 +463,8 @@ export const trackChecklist = catchAsync(async (req, res) => {
     entries: [
       {
         time: dateContext.time,
-        description: activeChecklist ? "Checked in again." : "Checked in.",
+        description: "Checked in.",
+        systemEntryType: "first_booked_in",
       },
     ],
     source: dateContext.source,
@@ -556,6 +539,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
       {
         time: dateContext.time,
         description: "Checked out.",
+        systemEntryType: "last_booked_off",
       },
     ],
     source: dateContext.source,

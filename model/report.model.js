@@ -45,6 +45,12 @@ const reportEntrySchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    systemEntryType: {
+      type: String,
+      enum: ["first_booked_in", "last_booked_off", null],
+      default: null,
+      index: true,
+    },
     images: {
       type: [reportImageSchema],
       default: [],

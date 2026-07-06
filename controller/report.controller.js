@@ -26,6 +26,51 @@ const getDateInfo = (value, source = {}) => getUserDateInfo(value, source);
 
 const getCurrentTime = () => getCurrentUtcTime();
 
+const systemEntryTypes = new Set(["first_booked_in", "last_booked_off"]);
+
+const normalizeSystemDescription = (value = "") =>
+  String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "");
+
+const systemTypeFromDescription = (description) => {
+  switch (normalizeSystemDescription(description)) {
+    case "checked in":
+    case "checked in again":
+    case "check-in":
+    case "checked_in":
+    case "booked-in":
+    case "booked in":
+    case "first booked in":
+      return "first_booked_in";
+    case "checked out":
+    case "check-out":
+    case "checked_out":
+    case "manual checkout":
+    case "booked-off":
+    case "booked off":
+    case "end shift":
+      return "last_booked_off";
+    default:
+      return null;
+  }
+};
+
+const incomingSystemEntryType = (entry) => {
+  const systemEntryType = entry?.systemEntryType?.toString();
+  return systemEntryTypes.has(systemEntryType) ? systemEntryType : null;
+};
+
+const existingSystemEntryType = (entry) => {
+  const systemEntryType = entry?.systemEntryType?.toString();
+  if (systemEntryTypes.has(systemEntryType)) {
+    return systemEntryType;
+  }
+  return systemTypeFromDescription(entry?.description);
+};
+
 const parseJsonArray = (value, fieldName) => {
   if (Array.isArray(value)) {
     return value;
@@ -112,6 +157,7 @@ const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
     entries = parseJsonArray(body.entries, "entries").map((entry) => ({
       time: entry.time || defaultTime,
       description: entry.description,
+      systemEntryType: incomingSystemEntryType(entry),
       images: [],
     }));
   } else {
@@ -121,6 +167,7 @@ const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
         {
           time: body.time || defaultTime,
           description,
+          systemEntryType: incomingSystemEntryType(body),
           images: [],
         },
       ];
@@ -471,31 +518,57 @@ export const addDailyReportEntries = async ({
     images: entry.images || [],
   }));
 
-  const update = {
-    $setOnInsert: {
-      user,
-      reportDate,
+  const report = await Report.findOneAndUpdate(
+    { user, reportDate },
+    {
+      $setOnInsert: { user, reportDate },
+      $set: { day: reportDay, ...header },
     },
-    $set: {
-      day: reportDay,
-      ...header,
+    {
+      new: true,
+      upsert: true,
+      runValidators: true,
+      setDefaultsOnInsert: true,
     },
-  };
+  );
 
-  if (normalizedEntries.length) {
-    update.$push = {
-      entries: {
-        $each: normalizedEntries,
-      },
-    };
+  let changed = false;
+  normalizedEntries.forEach((entry) => {
+    const systemEntryType = incomingSystemEntryType(entry);
+
+    if (systemEntryType === "first_booked_in") {
+      const hasBookedIn = report.entries.some(
+        (item) => existingSystemEntryType(item) === "first_booked_in",
+      );
+      if (!hasBookedIn) {
+        report.entries.push({ ...entry, systemEntryType });
+        changed = true;
+      }
+      return;
+    }
+
+    if (systemEntryType === "last_booked_off") {
+      const previousLength = report.entries.length;
+      report.entries = report.entries.filter(
+        (item) => existingSystemEntryType(item) !== "last_booked_off",
+      );
+      if (report.entries.length !== previousLength) {
+        changed = true;
+      }
+      report.entries.push({ ...entry, systemEntryType });
+      changed = true;
+      return;
+    }
+
+    report.entries.push(entry);
+    changed = true;
+  });
+
+  if (changed) {
+    await report.save();
   }
 
-  return Report.findOneAndUpdate({ user, reportDate }, update, {
-    new: true,
-    upsert: true,
-    runValidators: true,
-    setDefaultsOnInsert: true,
-  });
+  return report;
 };
 
 export const updateReport = catchAsync(async (req, res) => {
