@@ -177,17 +177,84 @@ const getImageRemoveTokens = (body) =>
     .filter(Boolean)
     .map(normalizeImageToken);
 
-const isSameImage = (image, removeTokens) => {
-  const values = [
-    image._id?.toString(),
-    image.fileName,
-    image.path,
-    image.url,
+const getEntryImageMap = (body) =>
+  parseOptionalJsonArray(body.entryImageMap, "entryImageMap");
+
+const getImageIdentityTokens = (image) =>
+  [
+    image?._id?.toString(),
+    image?.id?.toString(),
+    image?.fileName,
+    image?.path,
+    image?.url,
   ]
     .filter(Boolean)
     .map(normalizeImageToken);
 
+const isSameImage = (image, removeTokens) => {
+  const values = getImageIdentityTokens(image);
+
   return values.some((value) => removeTokens.includes(value));
+};
+
+const syncEntryImages = (entry, images = []) => {
+  const keepTokens = images.flatMap(getImageIdentityTokens);
+  const removedImages = [];
+
+  entry.images = entry.images.filter((image) => {
+    const imageTokens = getImageIdentityTokens(image);
+    if (imageTokens.some((token) => keepTokens.includes(token))) {
+      return true;
+    }
+    removedImages.push(image);
+    return false;
+  });
+
+  return removedImages;
+};
+
+const applyMappedUploadedImages = ({
+  report,
+  newEntries,
+  uploadedImages,
+  entryImageMap,
+}) => {
+  let changed = false;
+
+  uploadedImages.forEach((image, index) => {
+    const imageMap = entryImageMap[index];
+    if (!imageMap) return;
+
+    const target = imageMap.target?.toString();
+    const entryId =
+      imageMap.entryId?.toString() ||
+      imageMap._id?.toString() ||
+      imageMap.id?.toString();
+    const entryIndex = Number(imageMap.entryIndex);
+
+    if (target === "entryUpdates" || entryId) {
+      if (!report) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "entryImageMap target is invalid",
+        );
+      }
+      const entry = entryId ? report.entries.id(entryId) : null;
+      if (!entry) {
+        throw new AppError(httpStatus.NOT_FOUND, "Report entry not found");
+      }
+      entry.images.push(image);
+      changed = true;
+      return;
+    }
+
+    if (Number.isInteger(entryIndex) && newEntries[entryIndex]) {
+      newEntries[entryIndex].images.push(image);
+      changed = true;
+    }
+  });
+
+  return changed;
 };
 
 const deleteLocalReportImages = async (images = []) => {
@@ -246,18 +313,27 @@ const updateReportDocument = async (req, report) => {
 
   const header = buildHeaderUpdate(req.body);
   const removeTokens = getImageRemoveTokens(req.body);
+  const entryImageMap = getEntryImageMap(req.body);
   const entryId = req.body.entryId;
   const targetEntry = entryId ? report.entries.id(entryId) : null;
   const willAppendEntries =
     req.body.entries !== undefined ||
     req.body.description ||
     req.body.reportDescription;
+  const willUpdateEntries =
+    req.body.entryUpdates !== undefined || req.body.updateEntries !== undefined;
 
   if (entryId && !targetEntry) {
     throw new AppError(httpStatus.NOT_FOUND, "Report entry not found");
   }
 
-  if (!entryId && req.files?.length && !willAppendEntries) {
+  if (
+    !entryId &&
+    req.files?.length &&
+    !willAppendEntries &&
+    !willUpdateEntries &&
+    !entryImageMap.length
+  ) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
       "entryId or description is required when uploading report images",
@@ -265,6 +341,7 @@ const updateReportDocument = async (req, report) => {
   }
 
   let changed = false;
+  const removedImages = [];
 
   Object.entries(header).forEach(([field, value]) => {
     report[field] = value;
@@ -297,6 +374,11 @@ const updateReportDocument = async (req, report) => {
       entry.description = entryUpdate.description;
       changed = true;
     }
+    if (Array.isArray(entryUpdate.images)) {
+      const removed = syncEntryImages(entry, entryUpdate.images);
+      removedImages.push(...removed);
+      changed = removed.length > 0 || changed;
+    }
   });
 
   if (targetEntry) {
@@ -312,7 +394,6 @@ const updateReportDocument = async (req, report) => {
     }
   }
 
-  const removedImages = [];
   if (removeTokens.length) {
     report.entries.forEach((entry) => {
       if (entryId && entry._id.toString() !== entryId) {
@@ -336,13 +417,21 @@ const updateReportDocument = async (req, report) => {
   }
 
   const uploadedImages = await saveReportImages(req.files);
-  if (targetEntry && uploadedImages.length) {
+  if (entryImageMap.length && uploadedImages.length) {
+    changed =
+      applyMappedUploadedImages({
+        report,
+        newEntries,
+        uploadedImages,
+        entryImageMap,
+      }) || changed;
+  } else if (targetEntry && uploadedImages.length) {
     targetEntry.images.push(...uploadedImages);
     changed = true;
   }
 
   if (newEntries.length) {
-    if (uploadedImages.length) {
+    if (uploadedImages.length && !entryImageMap.length) {
       const imageEntryIndex = Math.min(
         Math.max(Number(req.body.imageEntryIndex) || 0, 0),
         newEntries.length - 1,
@@ -485,7 +574,20 @@ export const deleteReportEntryByDate = catchAsync(async (req, res) => {
 export const createReport = catchAsync(async (req, res) => {
   const uploadedImages = await saveReportImages(req.files);
   const dateContext = getRequestDateContext(req);
-  const entries = buildEntries(req.body, uploadedImages, dateContext.time);
+  const entryImageMap = getEntryImageMap(req.body);
+  const entries = buildEntries(
+    req.body,
+    entryImageMap.length ? [] : uploadedImages,
+    dateContext.time,
+  );
+  if (entryImageMap.length && uploadedImages.length) {
+    applyMappedUploadedImages({
+      report: null,
+      newEntries: entries,
+      uploadedImages,
+      entryImageMap,
+    });
+  }
   const header = buildHeaderUpdate(req.body);
 
   if (!entries.length && !Object.keys(header).length) {
