@@ -26,6 +26,9 @@ const getDateInfo = (value, source = {}) => getUserDateInfo(value, source);
 
 const getCurrentTime = () => getCurrentUtcTime();
 
+const getTimezoneFromSource = (source = {}) =>
+  source.timeZone || source.timezone || source.tz;
+
 const systemEntryTypes = new Set(["first_booked_in", "last_booked_off"]);
 
 const normalizeSystemDescription = (value = "") =>
@@ -199,6 +202,9 @@ const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
 
   return entries;
 };
+
+const systemReportEntriesOnly = (entries = []) =>
+  entries.filter((entry) => incomingSystemEntryType(entry));
 
 const parseOptionalJsonArray = (value, fieldName) => {
   if (value === undefined || value === null || value === "") {
@@ -509,10 +515,19 @@ export const addDailyReportEntries = async ({
   source = {},
   defaultTime,
 }) => {
+  const reportEntries = systemReportEntriesOnly(entries);
+  if (!reportEntries.length && !Object.keys(header).length) {
+    return Report.findOne({
+      user,
+      reportDate: getDateInfo(date, source).reportDate,
+    });
+  }
+
   const dateInfo = getDateInfo(date, source);
   const reportDate = dateInfo.reportDate;
   const reportDay = day || dateInfo.day;
-  const normalizedEntries = entries.map((entry) => ({
+  const timezone = getTimezoneFromSource(source);
+  const normalizedEntries = reportEntries.map((entry) => ({
     ...entry,
     time: entry.time || defaultTime || getCurrentTime(),
     images: entry.images || [],
@@ -522,7 +537,11 @@ export const addDailyReportEntries = async ({
     { user, reportDate },
     {
       $setOnInsert: { user, reportDate },
-      $set: { day: reportDay, ...header },
+      $set: {
+        day: reportDay,
+        ...(timezone ? { timezone } : {}),
+        ...header,
+      },
     },
     {
       new: true,

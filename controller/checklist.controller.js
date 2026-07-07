@@ -33,8 +33,11 @@ const parsePagination = (query) => {
   return { page, limit, skip };
 };
 
-const notOkOptions = new Set(["no", "no_ok"]);
+const notOkOptions = new Set(["not_ok", "no", "no_ok", "checked_in_not_ok"]);
 const missedOptions = new Set(["checked_in_missed", "missed"]);
+const recheckOkOptions = new Set(["yes", "ok", "okay", "recheck", "re_checked_in"]);
+const MISSED_RESPONSE_DUE_MS = 5 * 60 * 1000;
+const RECHECK_INTERVAL_MS = 90 * 60 * 1000;
 const activeChecklistStatuses = [
   "checked_in",
   "re_checked_in",
@@ -42,6 +45,24 @@ const activeChecklistStatuses = [
   "checked_in_missed",
   "user_outside_radius",
 ];
+
+const getChecklistLocalFields = (dateContext) => {
+  const fields = {};
+  if (dateContext.timezone) fields.timezone = dateContext.timezone;
+  if (dateContext.localDateTime) {
+    fields.localDateTime = dateContext.localDateTime;
+  }
+  if (dateContext.localTime) fields.localTime = dateContext.localTime;
+  return fields;
+};
+
+const isRecentMissedResponse = (checklist, now) => {
+  if (checklist?.status !== "checked_in_missed") return false;
+  const eventAt = new Date(
+    checklist.checkInAt || checklist.createdAt,
+  ).getTime();
+  return now.getTime() - eventAt < RECHECK_INTERVAL_MS;
+};
 
 const notifyAdmins = async (title, message) => {
   const admins = await User.find({ role: "admin" }).select("_id");
@@ -58,6 +79,7 @@ const createOutsideRadiusRecord = async ({
   lng,
   distance,
   radius,
+  localFields = {},
 }) => {
   const now = new Date();
   const checklist = await Checklist.create({
@@ -67,6 +89,7 @@ const createOutsideRadiusRecord = async ({
     option: "outside radius",
     workDate,
     checkOutLocation: { latitude: lat, longitude: lng },
+    ...localFields,
     autoCheckoutTrigger: {
       latitude: lat,
       longitude: lng,
@@ -96,6 +119,8 @@ const createMissedRecord = async ({
   lat,
   lng,
   sourceChecklist,
+  eventAt = new Date(),
+  localFields = {},
 }) => {
   const missedResponseFor = sourceChecklist?._id;
   if (!missedResponseFor) {
@@ -113,9 +138,11 @@ const createMissedRecord = async ({
         user: userId,
         status: "checked_in_missed",
         workDate,
+        checkInAt: eventAt,
         checkOutLocation: { latitude: lat, longitude: lng },
         option: "checked_in_missed",
         missedResponseFor,
+        ...localFields,
         alertStatus: "pending",
         alertSentAt: null,
       },
@@ -142,13 +169,23 @@ const createMissedRecord = async ({
   return checklist;
 };
 
-const createNotOkRecord = async ({ userId, userName, workDate, lat, lng }) => {
+const createNotOkRecord = async ({
+  userId,
+  userName,
+  workDate,
+  lat,
+  lng,
+  eventAt = new Date(),
+  localFields = {},
+}) => {
   const checklist = await Checklist.create({
     user: userId,
     status: "checked_in_not_ok",
     workDate,
+    checkInAt: eventAt,
     checkOutLocation: { latitude: lat, longitude: lng },
     option: "checked_in_not_ok",
+    ...localFields,
     alertStatus: "pending",
     alertSentAt: null,
   });
@@ -181,6 +218,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "Invalid latitude/longitude");
   }
   const normalizedOption = option.toString().trim().toLowerCase();
+  console.log(`[CHECKLIST] track option received=${normalizedOption}`);
 
   const user = await User.findById(req.user._id).select("location defaultRadius");
   if (
@@ -203,6 +241,10 @@ export const trackChecklist = catchAsync(async (req, res) => {
   );
   const dateContext = getRequestDateContext(req);
   const { workDate, now } = dateContext;
+  const localFields = getChecklistLocalFields(dateContext);
+  if (req.body.localDate) {
+    console.log(`[CHECKLIST] workDate from localDate=${workDate}`);
+  }
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
     workDate,
@@ -213,7 +255,131 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
 
   if (activeChecklist && activeChecklist.status !== "checked_out") {
-    if (distance > radius && option != "no") {
+    if (recheckOkOptions.has(normalizedOption)) {
+      console.log("[CHECKLIST] recheck response path");
+      console.log("[CHECKLIST] recheck OK response received");
+      console.log("[CHECKLIST] bypassing manual cooldown for recheck response");
+      const checklist = await Checklist.create({
+        user: req.user._id,
+        option: normalizedOption,
+        status: "re_checked_in",
+        workDate,
+        checkInAt: now,
+        checkInLocation: { latitude: lat, longitude: lng },
+        ...localFields,
+      });
+
+      return sendResponse(res, {
+        statusCode: httpStatus.CREATED,
+        success: true,
+        message: "Checklist recheck completed",
+        data: {
+          action: "re_checked_in",
+          distance,
+          radius,
+          checklist,
+        },
+      });
+    }
+
+    if(notOkOptions.has(normalizedOption)){
+      console.log("[CHECKLIST] recheck response path");
+      console.log("[CHECKLIST] recheck NOT OK response received");
+      console.log("[CHECKLIST] manual no is not checked_in_missed");
+      console.log("[CHECKLIST] bypassing manual cooldown for recheck response");
+      const check = await Checklist.create({
+        user: req.user._id,
+        status: "checked_in_not_ok",
+        workDate,
+        checkInAt: now,
+        checkOutLocation: { latitude: lat, longitude: lng },
+        option: "not_ok",
+        ...localFields,
+        alertStatus: "pending",
+        alertSentAt: null,
+
+      })
+
+      const user = await User.findOne({ role: "admin" })
+
+      sendPushNotification(
+        [user._id],
+        "Check In Not OK Alert",
+        `${req.user.name} have been marked as not OK`,
+      );
+
+      return sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Check-in marked as not OK due to user response.",
+        data: {
+          action: "checked_in_not_ok",
+          distance,
+          radius,
+          checklist: check,
+        },
+      });
+    }
+
+    if (missedOptions.has(normalizedOption)) {
+      console.log("[CHECKLIST] recheck response path");
+      console.log("[CHECKLIST] missed check-in timeout received");
+      console.log("[CHECKLIST] bypassing manual cooldown for recheck response");
+      if (isRecentMissedResponse(activeChecklist, now)) {
+        return sendResponse(res, {
+          statusCode: httpStatus.OK,
+          success: true,
+          message: "Check-in missed because user did not respond",
+          data: {
+            action: "checked_in_missed",
+            distance,
+            radius,
+            checklist: activeChecklist,
+          },
+        });
+      }
+      const missedDueAt = new Date(
+        activeChecklist.createdAt.getTime() + MISSED_RESPONSE_DUE_MS,
+      );
+      if (missedDueAt > now) {
+        return sendResponse(res, {
+          statusCode: httpStatus.OK,
+          success: true,
+          message: "Missed response is not due",
+          data: {
+            action: "missed_not_due",
+            distance,
+            radius,
+            checklist: activeChecklist,
+          },
+        });
+      }
+
+      const checklist = await createMissedRecord({
+        userId: req.user._id,
+        userName: req.user.name,
+        workDate,
+        lat,
+        lng,
+        sourceChecklist: activeChecklist,
+        eventAt: now,
+        localFields,
+      });
+
+      return sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Check-in missed because user did not respond",
+        data: {
+          action: "checked_in_missed",
+          distance,
+          radius,
+          checklist,
+        },
+      });
+    }
+
+    if (distance > radius) {
       const now = dateContext.now;
       const check = await Checklist.create({
         user: req.user._id,
@@ -222,6 +388,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
         option: "outside radius",
         workDate,
         checkOutLocation: { latitude: lat, longitude: lng },
+        ...localFields,
         autoCheckoutTrigger: {
           latitude: lat,
           longitude: lng,
@@ -256,10 +423,25 @@ export const trackChecklist = catchAsync(async (req, res) => {
           action: "tracking_synced",
           distance,
           radius,
+          checklist: check,
+        },
+      });
+    }
+
+    if (normalizedOption === "site_visit") {
+      return sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Tracking synced",
+        data: {
+          action: "tracking_synced",
+          distance,
+          radius,
           checklist: activeChecklist,
         },
       });
     }
+
     const lastCheckInTime = new Date(
       activeChecklist.checkInAt || activeChecklist.createdAt,
     ).getTime();
@@ -270,157 +452,15 @@ export const trackChecklist = catchAsync(async (req, res) => {
 
     console.log("Time since last check-in (ms):", difference);
 
-    const NINETY_MINUTES = 90 * 60 * 1000;
-
-    if (difference < NINETY_MINUTES) {
+    if (difference < RECHECK_INTERVAL_MS) {
       const remainingMinutes = Math.ceil(
-        (NINETY_MINUTES - difference) / (1000 * 60),
+        (RECHECK_INTERVAL_MS - difference) / (1000 * 60),
       );
 
       throw new AppError(
         httpStatus.BAD_REQUEST,
         `You can check in again after ${remainingMinutes} minutes`,
       );
-    }
-
-    if (option === "no") {
-      console.log("User did not respond to check-in prompt and is outside radius, marking as check-in missed.", option);
-
-      const now = dateContext.now;
-      const check = await Checklist.create({
-        user: req.user._id,
-        option: normalizedOption,
-        status: "re_checked_in",
-        workDate,
-        // checkOutType = "auto";
-        checkOutLocation: { latitude: lat, longitude: lng },
-        option: distance > radius ? "user_outside_radius" : "checked_in_missed",
-        // autoCheckoutTrigger = {
-        //   latitude: lat,
-        //   longitude: lng,
-        //   recordedAt: now,
-        // };
-        alertStatus: "pending",
-        alertSentAt: null,
-
-      })
-
-      const user = await User.findOne({ role: "admin" })
-
-      sendPushNotification(
-        [user._id],
-        "Check In Missed Alert",
-        `${req.user.name} have been marked as missed because ${req.user.name} moved outside the allowed radius.`,
-      );
-
-      return sendResponse(res, {
-        statusCode: httpStatus.CREATED,
-        success: true,
-        message: "Checklist recheck completed",
-        data: {
-          action: "re_checked_in",
-          distance,
-          radius,
-          checklist,
-        },
-      });
-    }
-
-    if(option === "no_ok"){
-
-      console.log("User did not respond to check-in prompt and is outside radius, marking as check-in not OK.", option);
-
-      const now = dateContext.now;
-      const check = await Checklist.create({
-        user: req.user._id,
-        status: distance > radius ? "user_outside_radius" : "checked_in_not_ok",
-        // checkOutAt = now;
-        workDate,
-        // checkOutType = "auto";
-        checkOutLocation: { latitude: lat, longitude: lng },
-        option: distance > radius ? "user_outside_radius" : "checked_in_not_ok",
-        // autoCheckoutTrigger = {
-        //   latitude: lat,
-        //   longitude: lng,
-        //   recordedAt: now,
-        // };
-        alertStatus: "pending",
-        alertSentAt: null,
-
-      })
-
-      const user = await User.findOne({ role: "admin" })
-
-      sendPushNotification(
-        [user._id],
-        "Check In Not OK Alert",
-        `${req.user.name} have been marked as not OK`,
-      );
-
-      return sendResponse(res, {
-        statusCode: httpStatus.OK,
-        success: true,
-        message: "Check-in marked as not OK due to user response.",
-        data: {
-          action: "Check-in not OK",
-          distance,
-          radius,
-          checklist,
-        },
-      });
-    }
-
-    if (missedOptions.has(normalizedOption)) {
-      if (activeChecklist.status === "checked_in_missed") {
-        return sendResponse(res, {
-          statusCode: httpStatus.OK,
-          success: true,
-          message: "Check-in missed because user did not respond",
-          data: {
-            action: "Check-in missed",
-            distance,
-            radius,
-            checklist: activeChecklist,
-          },
-        });
-      }
-      const missedDueAt = new Date(
-        activeChecklist.createdAt.getTime() + MISSED_RESPONSE_DUE_MS,
-      );
-      if (missedDueAt > new Date()) {
-        return sendResponse(res, {
-          statusCode: httpStatus.OK,
-          success: true,
-          message: "Missed response is not due",
-          data: {
-            action: "missed_not_due",
-            distance,
-            radius,
-            checklist: activeChecklist,
-          },
-        });
-      }
-
-      const checklist = await createMissedRecord({
-        userId: req.user._id,
-        userName: req.user.name,
-        workDate,
-        lat,
-        lng,
-        sourceChecklist: activeChecklist,
-      });
-
-      return sendResponse(res, {
-        statusCode: httpStatus.OK,
-        success: true,
-        message: "Check-in missed because user did not respond",
-        data: {
-          action: "Check-in missed",
-          distance,
-          radius,
-          checklist,
-        },
-      });
     }
 
     return sendResponse(res, {
@@ -454,6 +494,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     workDate,
     checkInAt: now,
     checkInLocation: { latitude: lat, longitude: lng },
+    ...localFields,
   });
 
   await addDailyReportEntries({
@@ -498,6 +539,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
 
   const dateContext = getRequestDateContext(req);
   const { workDate, now } = dateContext;
+  const localFields = getChecklistLocalFields(dateContext);
 
   const activeChecklist = await Checklist.findOne({
     user: req.user._id,
@@ -528,6 +570,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
     workDate,
     checkOutType: "manual",
     checkOutLocation: { latitude: lat, longitude: lng },
+    ...localFields,
 
   });
 

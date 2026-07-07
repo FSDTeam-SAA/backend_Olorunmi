@@ -18,6 +18,18 @@ const checklistSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    timezone: {
+      type: String,
+      trim: true,
+    },
+    localDateTime: {
+      type: String,
+      trim: true,
+    },
+    localTime: {
+      type: String,
+      trim: true,
+    },
     checkInAt: {
       type: Date,
       default: Date.now,

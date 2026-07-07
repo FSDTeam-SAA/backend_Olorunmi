@@ -195,6 +195,8 @@ const formatTimeForSource = (date, source = {}) => {
 
 const getTimestampValue = (source) =>
   getFirstValue(source, [
+    "localDateTime",
+    "clientLocalDateTime",
     "timestamp",
     "clientTimestamp",
     "clientTime",
@@ -248,6 +250,12 @@ export const getUserDateInfo = (value, source = {}) => {
 export const getRequestDateContext = (req, fallback = new Date()) => {
   const source = getRequestDateSource(req);
   const now = getClientNow(source, fallback);
+  const timezone = getFirstValue(source, ["timeZone", "timezone", "tz"]);
+  const localDateTime = getFirstValue(source, [
+    "localDateTime",
+    "clientLocalDateTime",
+  ]);
+  const localTime = getFirstValue(source, ["localTime", "clientLocalTime"]);
   const explicitDate = getFirstValue(source, [
     "workDate",
     "localDate",
@@ -264,7 +272,10 @@ export const getRequestDateContext = (req, fallback = new Date()) => {
     source,
     workDate,
     day: getDayForDate(workDate),
-    time: formatTimeForSource(now, source),
+    time: localTime || formatTimeForSource(now, source),
+    timezone,
+    localDateTime,
+    localTime,
   };
 };
 

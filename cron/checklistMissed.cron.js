@@ -6,6 +6,74 @@ import { sendPushNotification } from "../utils/sendPushNotification.js";
 const RESPONSE_INTERVAL_MS = 97 * 60 * 1000;
 const CRON_INTERVAL_MS = Number(process.env.CHECKLIST_MISSED_CRON_MS) ||  30*1000;
 
+const pad = (value, length = 2) => String(value).padStart(length, "0");
+
+const parseShortOffset = (value = "") => {
+  const normalizedValue = value.replace("UTC", "GMT");
+  if (normalizedValue === "GMT") {
+    return "+00:00";
+  }
+
+  const match = normalizedValue.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) {
+    return undefined;
+  }
+
+  return `${match[1]}${pad(match[2])}:${pad(match[3] || 0)}`;
+};
+
+const getLocalDateTimeFields = (date, timezone) => {
+  if (!timezone) return {};
+
+  try {
+    const dateTimeParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+      hourCycle: "h23",
+      timeZoneName: "shortOffset",
+    }).formatToParts(date);
+    const displayTimeParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).formatToParts(date);
+    const dateTimeValues = Object.fromEntries(
+      dateTimeParts.map((part) => [part.type, part.value]),
+    );
+    const displayTimeValues = Object.fromEntries(
+      displayTimeParts.map((part) => [part.type, part.value]),
+    );
+    const offset = parseShortOffset(dateTimeValues.timeZoneName);
+
+    return {
+      localDateTime: [
+        `${dateTimeValues.year}-${dateTimeValues.month}-${dateTimeValues.day}`,
+        "T",
+        `${dateTimeValues.hour}:${dateTimeValues.minute}:${dateTimeValues.second}`,
+        `.${pad(date.getUTCMilliseconds(), 3)}`,
+        offset || "",
+      ].join(""),
+      localTime: `${displayTimeValues.hour}:${displayTimeValues.minute} ${displayTimeValues.dayPeriod}`,
+    };
+  } catch {
+    return {};
+  }
+};
+
+const getChecklistLocalFields = (checklist, eventAt) => {
+  const fields = {};
+  if (checklist.timezone) fields.timezone = checklist.timezone;
+  Object.assign(fields, getLocalDateTimeFields(eventAt, checklist.timezone));
+  return fields;
+};
+
 const getDueMissedTimes = (fromDate, now) => {
   const dueTimes = [];
   let nextDueAt = new Date(fromDate.getTime() + RESPONSE_INTERVAL_MS);
@@ -46,6 +114,7 @@ const notifyAdmins = async (title, message) => {
 
 const createMissedChecklist = async ({ activeCheckIn, dueAt, workDate }) => {
   const checkOutLocation = getLatestKnownLocation(activeCheckIn);
+  const localFields = getChecklistLocalFields(activeCheckIn, dueAt);
   const result = await Checklist.findOneAndUpdate(
     { missedResponseFor: activeCheckIn._id },
     {
@@ -56,6 +125,7 @@ const createMissedChecklist = async ({ activeCheckIn, dueAt, workDate }) => {
         option: "checked_in_missed",
         checkInAt: dueAt,
         missedResponseFor: activeCheckIn._id,
+        ...localFields,
         ...(checkOutLocation ? { checkOutLocation } : {}),
         alertStatus: "pending",
         alertSentAt: null,
@@ -80,16 +150,6 @@ const createMissedChecklist = async ({ activeCheckIn, dueAt, workDate }) => {
     "Check In Missed Alert",
     `${activeCheckIn.user.name || "A user"} missed the check-in prompt.`,
   );
-  await addDailyReportEntries({
-    user: activeCheckIn.user._id,
-    date: workDate,
-    entries: [
-      {
-        description: "User missed the check-in prompt.",
-      },
-    ],
-  });
-
   return { checklist, created };
 };
 
@@ -106,7 +166,7 @@ export const markMissedChecklists = async (now = new Date()) => {
   let createdCount = 0;
   const processedUsers = new Set();
 
-  for (const activeCheckIn of dueResponses) {
+  for (const activeCheckIn of activeCheckIns) {
     if (!activeCheckIn.user?._id) {
       continue;
     }
@@ -136,14 +196,14 @@ export const markMissedChecklists = async (now = new Date()) => {
     }).sort({ createdAt: -1 });
 
     if (
-      !latestChecklist ||
-      latestChecklist._id.toString() !== activeCheckIn._id.toString()
+      !latestProgressChecklist ||
+      latestProgressChecklist._id.toString() !== activeCheckIn._id.toString()
     ) {
       continue;
     }
 
     const dueAt = new Date(
-      activeCheckIn.createdAt.getTime() + MISSED_RESPONSE_DUE_MS,
+      activeCheckIn.createdAt.getTime() + RESPONSE_INTERVAL_MS,
     );
     if (dueAt > now) {
       continue;

@@ -73,6 +73,10 @@ const reportSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    timezone: {
+      type: String,
+      trim: true,
+    },
     day: {
       type: String,
       required: true,
