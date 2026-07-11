@@ -201,6 +201,8 @@ const createNotOkRecord = async ({
 export const trackChecklist = catchAsync(async (req, res) => {
   const { latitude, longitude, option } = req.body;
 
+  console.log(`body =${req.body}`);
+
   if (
     latitude === undefined ||
     longitude === undefined ||
