@@ -37,6 +37,21 @@ const userSchema = new Schema(
       latitude: { type: Number },
       longitude: { type: Number },
     },
+    site: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    onShift: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    offShift: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     defaultRadius: {
       type: Number,
       default: 100,
