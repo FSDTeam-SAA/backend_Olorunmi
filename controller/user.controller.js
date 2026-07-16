@@ -47,6 +47,8 @@ const parseRadius = (value) => {
   return parsedValue;
 };
 
+const normalizeOptionalString = (value) => String(value ?? "").trim();
+
 // Get user profile
 export const getProfile = catchAsync(async (req, res) => {
   const user = await User.findById(req.user._id).select(
@@ -157,7 +159,17 @@ export const deleteOwnAccount = catchAsync(async (req, res) => {
 });
 
 export const createUserByAdmin = catchAsync(async (req, res) => {
-  const { name, userId, password, latitude, longitude, defaultRadius } =
+  const {
+    name,
+    userId,
+    password,
+    latitude,
+    longitude,
+    defaultRadius,
+    site,
+    onShift,
+    offShift,
+  } =
     req.body;
 
   if (
@@ -194,6 +206,9 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
       latitude: parsedLatitude,
       longitude: parsedLongitude,
     },
+    site: normalizeOptionalString(site),
+    onShift: normalizeOptionalString(onShift),
+    offShift: normalizeOptionalString(offShift),
     defaultRadius:
       defaultRadius !== undefined ? parseRadius(defaultRadius) : 100,
     verificationInfo: { token: "", verified: true },
@@ -290,7 +305,17 @@ export const getUserDetailsForAdmin = catchAsync(async (req, res) => {
 
 export const updateUserByAdmin = catchAsync(async (req, res) => {
   const { id } = req.params;
-  const { name, userId, password, latitude, longitude, defaultRadius } =
+  const {
+    name,
+    userId,
+    password,
+    latitude,
+    longitude,
+    defaultRadius,
+    site,
+    onShift,
+    offShift,
+  } =
     req.body;
 
   const user = await User.findById(id);
@@ -315,6 +340,9 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
   if (defaultRadius !== undefined) {
     user.defaultRadius = parseRadius(defaultRadius);
   }
+  if (site !== undefined) user.site = normalizeOptionalString(site);
+  if (onShift !== undefined) user.onShift = normalizeOptionalString(onShift);
+  if (offShift !== undefined) user.offShift = normalizeOptionalString(offShift);
 
   const hasLatitude =
     latitude !== undefined && latitude !== null && latitude !== "";
