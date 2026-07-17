@@ -6,6 +6,7 @@ import AppError from "../errors/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
 import sendResponse from "../utils/sendResponse.js";
 import { Report } from "../model/report.model.js";
+import { User } from "../model/user.model.js";
 import {
   getCurrentUtcTime,
   getRequestDateContext,
@@ -114,6 +115,106 @@ const buildHeaderUpdate = (body) => {
     }
     return acc;
   }, {});
+};
+
+const hasText = (value) => String(value ?? "").trim().length > 0;
+
+const plainReport = (report) =>
+  report?.toObject ? report.toObject({ virtuals: true }) : { ...report };
+
+const buildUserReportHeader = (user = {}) => {
+  const header = {};
+  const fieldMap = {
+    site: user.site,
+    onShift: user.onShift,
+    offShift: user.offShift,
+    security: user.name || user.username || user.userId,
+  };
+
+  Object.entries(fieldMap).forEach(([field, value]) => {
+    const text = value?.toString().trim();
+    if (text) header[field] = text;
+  });
+
+  return header;
+};
+
+const buildCreateHeader = (body, user) => {
+  const userHeader = buildUserReportHeader(user);
+  const bodyHeader = buildHeaderUpdate(body);
+  const header = { ...userHeader };
+
+  Object.entries(bodyHeader).forEach(([field, value]) => {
+    if (hasText(value)) {
+      header[field] = value;
+    }
+  });
+
+  return header;
+};
+
+const fillMissingReportHeader = (report, user) => {
+  const userHeader = buildUserReportHeader(user);
+  let changed = false;
+
+  Object.entries(userHeader).forEach(([field, value]) => {
+    if (!hasText(report[field]) && hasText(value)) {
+      report[field] = value;
+      changed = true;
+    }
+  });
+
+  return changed;
+};
+
+const serializeReportWithUserHeader = (report, user) => {
+  if (!report) return report;
+  const response = plainReport(report);
+  const userHeader = buildUserReportHeader(user);
+
+  console.log(`[REPORT] user site=${userHeader.site || ""}`);
+  console.log(`[REPORT] user onShift=${userHeader.onShift || ""}`);
+  console.log(`[REPORT] user offShift=${userHeader.offShift || ""}`);
+
+  Object.entries(userHeader).forEach(([field, value]) => {
+    if (!hasText(response[field]) && hasText(value)) {
+      response[field] = value;
+    }
+  });
+
+  console.log(
+    `[REPORT] final response site=${response.site || ""}`,
+  );
+  console.log(`[REPORT] final response onShift=${response.onShift || ""}`);
+  console.log(`[REPORT] final response offShift=${response.offShift || ""}`);
+  return response;
+};
+
+const resolveReportUser = async (report, fallbackUser) => {
+  const reportUser = report?.user;
+  const fallbackId = fallbackUser?._id?.toString();
+  const reportUserId =
+    reportUser?._id?.toString?.() || reportUser?.toString?.() || "";
+
+  if (
+    reportUser &&
+    typeof reportUser === "object" &&
+    (hasText(reportUser.site) ||
+      hasText(reportUser.onShift) ||
+      hasText(reportUser.offShift))
+  ) {
+    return reportUser;
+  }
+
+  if (fallbackId && reportUserId && fallbackId === reportUserId) {
+    return fallbackUser;
+  }
+
+  if (!reportUserId) return fallbackUser;
+
+  return User.findById(reportUserId).select(
+    "name username userId site onShift offShift",
+  );
 };
 
 const saveReportImages = async (files = []) => {
@@ -401,6 +502,9 @@ const updateReportDocument = async (req, report) => {
     changed = true;
   });
 
+  const reportUser = await resolveReportUser(report, req.user);
+  changed = fillMissingReportHeader(report, reportUser) || changed;
+
   if (req.body.day !== undefined) {
     report.day = req.body.day;
     changed = true;
@@ -593,24 +697,34 @@ export const addDailyReportEntries = async ({
 export const updateReport = catchAsync(async (req, res) => {
   const report = await getReportForUpdateById(req);
   const updatedReport = await updateReportDocument(req, report);
+  const responseUser = await resolveReportUser(updatedReport, req.user);
+  const responseReport = serializeReportWithUserHeader(
+    updatedReport,
+    responseUser,
+  );
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Report updated successfully",
-    data: updatedReport,
+    data: responseReport,
   });
 });
 
 export const updateReportByDate = catchAsync(async (req, res) => {
   const report = await getReportForUpdateByDate(req);
   const updatedReport = await updateReportDocument(req, report);
+  const responseUser = await resolveReportUser(updatedReport, req.user);
+  const responseReport = serializeReportWithUserHeader(
+    updatedReport,
+    responseUser,
+  );
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Report updated successfully",
-    data: updatedReport,
+    data: responseReport,
   });
 });
 
@@ -680,7 +794,7 @@ export const createReport = catchAsync(async (req, res) => {
       entryImageMap,
     });
   }
-  const header = buildHeaderUpdate(req.body);
+  const header = buildCreateHeader(req.body, req.user);
 
   if (!entries.length && !Object.keys(header).length) {
     throw new AppError(
@@ -698,12 +812,13 @@ export const createReport = catchAsync(async (req, res) => {
     source: dateContext.source,
     defaultTime: dateContext.time,
   });
+  const responseReport = serializeReportWithUserHeader(report, req.user);
 
   return sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
     message: "Report created successfully",
-    data: report,
+    data: responseReport,
   });
 });
 
@@ -714,12 +829,15 @@ export const getMyReports = catchAsync(async (req, res) => {
   }
 
   const reports = await Report.find(filter).sort({ reportDate: -1 });
+  const responseReports = reports.map((report) =>
+    serializeReportWithUserHeader(report, req.user),
+  );
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Reports fetched successfully",
-    data: reports,
+    data: responseReports,
   });
 });
 
@@ -735,19 +853,22 @@ export const getAllReports = catchAsync(async (req, res) => {
 
   const [reports, total] = await Promise.all([
     Report.find(filter)
-      .populate("user", "name userId email")
+      .populate("user", "name userId email site onShift offShift")
       .sort({ reportDate: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit),
     Report.countDocuments(filter),
   ]);
+  const responseReports = reports.map((report) =>
+    serializeReportWithUserHeader(report, report.user),
+  );
 
   return sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "All reports fetched successfully",
     data: {
-      reports,
+      reports: responseReports,
       pagination: {
         page,
         limit,

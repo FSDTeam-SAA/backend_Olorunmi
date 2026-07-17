@@ -56,6 +56,23 @@ const getChecklistLocalFields = (dateContext) => {
   return fields;
 };
 
+const getDailyReportHeaderFromUser = (user = {}) => {
+  const header = {};
+  const fieldMap = {
+    site: user.site,
+    onShift: user.onShift,
+    offShift: user.offShift,
+    security: user.name || user.username || user.userId,
+  };
+
+  Object.entries(fieldMap).forEach(([field, value]) => {
+    const text = value?.toString().trim();
+    if (text) header[field] = text;
+  });
+
+  return header;
+};
+
 const isRecentMissedResponse = (checklist, now) => {
   if (checklist?.status !== "checked_in_missed") return false;
   const eventAt = new Date(
@@ -222,7 +239,9 @@ export const trackChecklist = catchAsync(async (req, res) => {
   const normalizedOption = option.toString().trim().toLowerCase();
   console.log(`[CHECKLIST] track option received=${normalizedOption}`);
 
-  const user = await User.findById(req.user._id).select("location defaultRadius");
+  const user = await User.findById(req.user._id).select(
+    "location defaultRadius site onShift offShift name username userId",
+  );
   if (
     !user?.location ||
     user.location.latitude === undefined ||
@@ -503,6 +522,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     user: req.user._id,
     date: workDate,
     day: dateContext.day,
+    header: getDailyReportHeaderFromUser(user),
     entries: [
       {
         time: dateContext.time,
@@ -580,6 +600,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
     user: req.user._id,
     date: workDate,
     day: dateContext.day,
+    header: getDailyReportHeaderFromUser(req.user),
     entries: [
       {
         time: dateContext.time,
