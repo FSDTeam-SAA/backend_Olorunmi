@@ -1,17 +1,24 @@
 import nodemailer from "nodemailer";
 
+const smtpUser = process.env.SMTP_USER || "finishersrepair@gmail.com";
+const smtpPass = process.env.SMTP_PASS || "rvclyuctitamywaw";
+const smtpFrom = process.env.SMTP_FROM || smtpUser;
+const smtpHost = process.env.SMTP_HOST || "smtp.gmail.com";
+const smtpPort = Number(process.env.SMTP_PORT) || 587;
+
 export const sendEmail = async (to, subject, html, options = {}) => {
   const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 587,
-    secure: false,
+    host: smtpHost,
+    port: smtpPort,
+    secure: process.env.SMTP_SECURE === "true",
     auth: {
-      user: "finishersrepair@gmail.com",
-      pass: "rvclyuctitamywaw",
+      user: smtpUser,
+      pass: smtpPass,
     },
   });
   await transporter.sendMail({
-    from: "finishersrepair@gmail.com",
+    from: options.from || smtpFrom,
+    replyTo: options.replyTo,
     to,
     subject: subject
       ? subject

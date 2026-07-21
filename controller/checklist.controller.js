@@ -44,6 +44,7 @@ const activeChecklistStatuses = [
   "checked_in_not_ok",
   "checked_in_missed",
   "user_outside_radius",
+  "back_inside_radius",
 ];
 
 const getChecklistLocalFields = (dateContext) => {
@@ -123,6 +124,35 @@ const createOutsideRadiusRecord = async ({
 
   return {
     action: "auto_checked_out",
+    distance,
+    radius,
+    checklist,
+  };
+};
+
+const createBackInsideRadiusRecord = async ({
+  userId,
+  workDate,
+  lat,
+  lng,
+  distance,
+  radius,
+  eventAt = new Date(),
+  localFields = {},
+}) => {
+  const checklist = await Checklist.create({
+    user: userId,
+    status: "back_inside_radius",
+    option: "back_inside_radius",
+    workDate,
+    checkInAt: eventAt,
+    checkInLocation: { latitude: lat, longitude: lng },
+    ...localFields,
+  });
+
+  return {
+    action: "back_inside_radius",
+    radiusState: "inside",
     distance,
     radius,
     checklist,
@@ -442,6 +472,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
         message: "Tracking synced",
         data: {
           action: "tracking_synced",
+          radiusState: "outside",
           distance,
           radius,
           checklist: check,
@@ -450,12 +481,33 @@ export const trackChecklist = catchAsync(async (req, res) => {
     }
 
     if (normalizedOption === "site_visit") {
+      if (activeChecklist.status === "user_outside_radius") {
+        const insideResult = await createBackInsideRadiusRecord({
+          userId: req.user._id,
+          workDate,
+          lat,
+          lng,
+          distance,
+          radius,
+          eventAt: now,
+          localFields,
+        });
+
+        return sendResponse(res, {
+          statusCode: httpStatus.OK,
+          success: true,
+          message: "Tracking synced",
+          data: insideResult,
+        });
+      }
+
       return sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
         message: "Tracking synced",
         data: {
           action: "tracking_synced",
+          radiusState: "inside",
           distance,
           radius,
           checklist: activeChecklist,
@@ -490,6 +542,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
       message: "Tracking synced",
       data: {
         action: "tracking_synced",
+        radiusState: "inside",
         distance,
         radius,
         checklist: activeChecklist,
@@ -540,6 +593,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     message: "Checklist check-in completed",
     data: {
       action: "checked_in",
+      radiusState: "inside",
       distance,
       radius,
       checklist,

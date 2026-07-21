@@ -16,7 +16,67 @@ const escapeHtml = (value = "") =>
     return entities[char];
   });
 
-const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value));
+const isEmail = (value) =>
+  /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i.test(String(value).trim());
+
+const collectRecipientValues = (value) => {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap(collectRecipientValues);
+  }
+
+  const text = String(value).trim();
+  if (!text) {
+    return [];
+  }
+
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsedValue = JSON.parse(text);
+      if (Array.isArray(parsedValue)) {
+        return collectRecipientValues(parsedValue);
+      }
+    } catch {
+      // Fall back to comma splitting below.
+    }
+  }
+
+  return text
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const normalizeRecipientEmails = (body = {}) => {
+  const candidates = [
+    ...collectRecipientValues(body.toEmails),
+    ...collectRecipientValues(body.to_emails),
+    ...collectRecipientValues(body.recipientEmails),
+    ...collectRecipientValues(body.recipient_emails),
+    ...collectRecipientValues(body.recipientEmail),
+    ...collectRecipientValues(body.recipient_email),
+    ...collectRecipientValues(body.toEmail),
+    ...collectRecipientValues(body.to_email),
+    ...collectRecipientValues(body.email),
+  ];
+
+  const normalizedEmails = [];
+  const seen = new Set();
+
+  for (const candidate of candidates) {
+    const email = candidate.trim().toLowerCase();
+    if (!email || seen.has(email)) continue;
+    seen.add(email);
+    normalizedEmails.push(email);
+  }
+
+  return normalizedEmails;
+};
+
+const invalidEmails = (emails) => emails.filter((email) => !isEmail(email));
 
 const getUploadedReportPdf = (files) => {
   if (!files) {
@@ -54,14 +114,9 @@ const buildReportPdfEmailTemplate = ({ message, senderName, fromEmail }) => {
 export const sendReportPdfEmail = catchAsync(async (req, res) => {
   const recipientName =
     req.body.recipientName || req.body.recipient_name || req.body.name;
-  const recipientEmail =
-    req.body.recipientEmail ||
-    req.body.recipient_email ||
-    req.body.toEmail ||
-    req.body.to_email ||
-    req.body.email;
-  const message = req.body.body || req.body.message;
-  const fromEmail = req.body.fromEmail || req.body.from_email;
+  const normalizedToEmails = normalizeRecipientEmails(req.body);
+  const message = req.body.body || req.body.message || "";
+  const fromEmail = (req.body.fromEmail || req.body.from_email || "").trim();
   const senderName =
     req.body.senderName ||
     req.body.sender_name ||
@@ -70,15 +125,19 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
   const subject = req.body.subject || "Report PDF";
   const pdf = getUploadedReportPdf(req.files);
 
-  if (!recipientName || !recipientEmail || !message) {
+  if (!normalizedToEmails.length) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
-      "recipientName, recipientEmail and message are required",
+      "At least one recipient email is required",
     );
   }
 
-  if (!isEmail(recipientEmail)) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Invalid recipientEmail");
+  const invalidRecipientEmails = invalidEmails(normalizedToEmails);
+  if (invalidRecipientEmails.length) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `Invalid recipient email address(es): ${invalidRecipientEmails.join(", ")}`,
+    );
   }
 
   if (fromEmail && !isEmail(fromEmail)) {
@@ -95,6 +154,10 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
     size: pdf.size,
   });
   console.log("Request body:", req.body);
+  console.log("[REPORT EMAIL] fromEmail=", fromEmail);
+  console.log("[REPORT EMAIL] toEmails count=", normalizedToEmails.length);
+  console.log("[REPORT EMAIL] toEmails=", normalizedToEmails);
+  console.log("[REPORT EMAIL] validation passed");
 
   const isPdf =
     pdf.mimetype === "application/pdf" ||
@@ -104,8 +167,9 @@ export const sendReportPdfEmail = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "Only PDF files are allowed");
   }
 
+  console.log("[REPORT EMAIL] sending report email");
   await sendEmail(
-    recipientEmail,
+    normalizedToEmails,
     subject,
     buildReportPdfEmailTemplate({
       message,
@@ -133,6 +197,7 @@ Thank you.`,
           contentType: pdf.mimetype || "application/pdf",
         },
       ],
+      replyTo: fromEmail || undefined,
     },
   );
 
@@ -142,7 +207,8 @@ Thank you.`,
     message: "Report PDF sent successfully",
     data: {
       recipientName,
-      recipientEmail,
+      recipientEmail: normalizedToEmails[0],
+      recipientEmails: normalizedToEmails,
       senderName,
       fromEmail,
       fileName: pdf.originalname || "report.pdf",
