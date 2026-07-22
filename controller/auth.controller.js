@@ -8,7 +8,14 @@ import { sendEmail } from "../utils/sendEmail.js";
 import { User } from "./../model/user.model.js";
 
 export const register = catchAsync(async (req, res) => {
-  const { name, email, password, confirmPassword,userId,location } = req.body;
+  const {
+    name,
+    email,
+    password,
+    confirmPassword,
+    userId,
+    weeklyLocations,
+  } = req.body;
 
   if (!email || !password) {
     throw new AppError(httpStatus.FORBIDDEN, "Please fill in all fields");
@@ -34,7 +41,7 @@ export const register = catchAsync(async (req, res) => {
     password,
     textPassword: password,
     verificationInfo: { token: "", verified: true },
-    location
+    weeklyLocations,
   });
 
   const jwtPayload = {

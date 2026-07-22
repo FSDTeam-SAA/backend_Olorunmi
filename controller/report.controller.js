@@ -878,3 +878,20 @@ export const getAllReports = catchAsync(async (req, res) => {
     },
   });
 });
+
+export const getReportImage = catchAsync(async (req, res) => {
+  const fileName = path.basename(req.params.fileName || "");
+  if (!fileName) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Image file name is required");
+  }
+
+  const imagePath = path.join(reportUploadDir, fileName);
+
+  try {
+    await fs.access(imagePath);
+  } catch {
+    throw new AppError(httpStatus.NOT_FOUND, "Report image not found");
+  }
+
+  return res.sendFile(imagePath);
+});

@@ -74,6 +74,21 @@ const getDailyReportHeaderFromUser = (user = {}) => {
   return header;
 };
 
+const hasLocationCoordinates = (location) =>
+  typeof location?.latitude === "number" &&
+  typeof location?.longitude === "number";
+
+const getConfiguredLocationForDay = (user, day) => {
+  const dayKey = day?.toString().trim().toLowerCase();
+  const weeklyLocation = dayKey ? user?.weeklyLocations?.[dayKey] : undefined;
+
+  if (hasLocationCoordinates(weeklyLocation)) {
+    return weeklyLocation;
+  }
+
+  return undefined;
+};
+
 const isRecentMissedResponse = (checklist, now) => {
   if (checklist?.status !== "checked_in_missed") return false;
   const eventAt = new Date(
@@ -270,13 +285,16 @@ export const trackChecklist = catchAsync(async (req, res) => {
   console.log(`[CHECKLIST] track option received=${normalizedOption}`);
 
   const user = await User.findById(req.user._id).select(
-    "location defaultRadius site onShift offShift name username userId",
+    "weeklyLocations defaultRadius site onShift offShift name username userId",
   );
-  if (
-    !user?.location ||
-    user.location.latitude === undefined ||
-    user.location.longitude === undefined
-  ) {
+  const dateContext = getRequestDateContext(req);
+  const { workDate, now } = dateContext;
+  const configuredLocation = getConfiguredLocationForDay(
+    user,
+    dateContext.day,
+  );
+
+  if (!configuredLocation) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
       "User base location is not configured",
@@ -287,11 +305,9 @@ export const trackChecklist = catchAsync(async (req, res) => {
   const distance = calculateDistanceInMeters(
     lat,
     lng,
-    user.location.latitude,
-    user.location.longitude,
+    configuredLocation.latitude,
+    configuredLocation.longitude,
   );
-  const dateContext = getRequestDateContext(req);
-  const { workDate, now } = dateContext;
   const localFields = getChecklistLocalFields(dateContext);
   if (req.body.localDate) {
     console.log(`[CHECKLIST] workDate from localDate=${workDate}`);
@@ -579,7 +595,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     entries: [
       {
         time: dateContext.time,
-        description: "Checked in.",
+        description: "Booked-In.",
         systemEntryType: "first_booked_in",
       },
     ],
@@ -658,7 +674,7 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
     entries: [
       {
         time: dateContext.time,
-        description: "Checked out.",
+        description: "Booked-Off.",
         systemEntryType: "last_booked_off",
       },
     ],
@@ -814,11 +830,6 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     },
   },
 
-  // Sort final grouped results
-  {
-    $sort: { createdAt: -1 },
-  },
-
   {
     $lookup: {
       from: "users",
@@ -832,6 +843,11 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
       path: "$user",
       preserveNullAndEmptyArrays: true,
     },
+  },
+
+  // Sort final grouped results
+  {
+    $sort: { createdAt: -1 },
   },
   {
     $facet: {

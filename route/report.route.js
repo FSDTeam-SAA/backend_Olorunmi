@@ -4,6 +4,7 @@ import {
   deleteReportEntry,
   deleteReportEntryByDate,
   getAllReports,
+  getReportImage,
   getMyReports,
   updateReport,
   updateReportByDate,
@@ -25,6 +26,7 @@ router.post(
   ]),
   sendReportPdfEmail,
 );
+router.get("/image/:fileName", getReportImage);
 router.post("/", protect, upload.array("images", 10), createReport);
 router.patch(
   "/date/:reportDate",

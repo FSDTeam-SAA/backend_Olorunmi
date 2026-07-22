@@ -49,6 +49,79 @@ const parseRadius = (value) => {
 
 const normalizeOptionalString = (value) => String(value ?? "").trim();
 
+const daysOfWeek = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+
+const parseJsonField = (value, fieldName) => {
+  if (typeof value !== "string") return value;
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new AppError(httpStatus.BAD_REQUEST, `${fieldName} must be valid JSON`);
+  }
+};
+
+const getDayLocationValue = (source, day, index) => {
+  if (Array.isArray(source)) return source[index];
+
+  return (
+    source?.[day] ??
+    source?.[day.charAt(0).toUpperCase() + day.slice(1)] ??
+    source?.[day.toUpperCase()]
+  );
+};
+
+const parseWeeklyLocations = (value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+
+  const source = parseJsonField(value, "weeklyLocations");
+  if (typeof source !== "object") {
+    throw new AppError(httpStatus.BAD_REQUEST, "weeklyLocations must be an object");
+  }
+
+  return daysOfWeek.reduce((weeklyLocations, day, index) => {
+    const dayLocation = getDayLocationValue(source, day, index);
+    if (!dayLocation) {
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        `weeklyLocations.${day} is required`,
+      );
+    }
+
+    weeklyLocations[day] = {
+      day: String(dayLocation.day ?? day).trim() || day,
+      latitude: parseCoordinate(
+        dayLocation.latitude ?? dayLocation.lat,
+        `weeklyLocations.${day}.latitude`,
+        -90,
+        90,
+      ),
+      longitude: parseCoordinate(
+        dayLocation.longitude ?? dayLocation.lng,
+        `weeklyLocations.${day}.longitude`,
+        -180,
+        180,
+      ),
+    };
+
+    return weeklyLocations;
+  }, {});
+};
+
+const createWeeklyLocationsFromPoint = (latitude, longitude) =>
+  daysOfWeek.reduce((weeklyLocations, day) => {
+    weeklyLocations[day] = { day, latitude, longitude };
+    return weeklyLocations;
+  }, {});
+
 // Get user profile
 export const getProfile = catchAsync(async (req, res) => {
   const user = await User.findById(req.user._id).select(
@@ -165,6 +238,7 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     password,
     latitude,
     longitude,
+    weeklyLocations,
     defaultRadius,
     site,
     onShift,
@@ -175,17 +249,28 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
   if (
     !name ||
     !userId ||
-    !password ||
-    latitude === undefined ||
-    latitude === null ||
-    latitude === "" ||
-    longitude === undefined ||
-    longitude === null ||
-    longitude === ""
+    !password
   ) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
-      "name, userId, password, latitude and longitude are required",
+      "name, userId and password are required",
+    );
+  }
+
+  const parsedWeeklyLocations = parseWeeklyLocations(weeklyLocations);
+  const isLatitudeMissing =
+    latitude === undefined ||
+    latitude === null ||
+    latitude === "";
+  const isLongitudeMissing =
+    longitude === undefined ||
+    longitude === null ||
+    longitude === "";
+
+  if (!parsedWeeklyLocations && (isLatitudeMissing || isLongitudeMissing)) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "latitude and longitude are required when weeklyLocations is not provided",
     );
   }
 
@@ -194,18 +279,23 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     throw new AppError(httpStatus.BAD_REQUEST, "userId already exists");
   }
 
-  const parsedLatitude = parseCoordinate(latitude, "latitude", -90, 90);
-  const parsedLongitude = parseCoordinate(longitude, "longitude", -180, 180);
+  const parsedLatitude =
+    latitude !== undefined && latitude !== null && latitude !== ""
+      ? parseCoordinate(latitude, "latitude", -90, 90)
+      : parsedWeeklyLocations.sunday.latitude;
+  const parsedLongitude =
+    longitude !== undefined && longitude !== null && longitude !== ""
+      ? parseCoordinate(longitude, "longitude", -180, 180)
+      : parsedWeeklyLocations.sunday.longitude;
 
   const userData = {
     name,
     userId,
     password,
     textPassword: password,
-    location: {
-      latitude: parsedLatitude,
-      longitude: parsedLongitude,
-    },
+    weeklyLocations:
+      parsedWeeklyLocations ??
+      createWeeklyLocationsFromPoint(parsedLatitude, parsedLongitude),
     site: normalizeOptionalString(site),
     onShift: normalizeOptionalString(onShift),
     offShift: normalizeOptionalString(offShift),
@@ -311,6 +401,7 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
     password,
     latitude,
     longitude,
+    weeklyLocations,
     defaultRadius,
     site,
     onShift,
@@ -344,6 +435,11 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
   if (onShift !== undefined) user.onShift = normalizeOptionalString(onShift);
   if (offShift !== undefined) user.offShift = normalizeOptionalString(offShift);
 
+  const parsedWeeklyLocations = parseWeeklyLocations(weeklyLocations);
+  if (parsedWeeklyLocations) {
+    user.weeklyLocations = parsedWeeklyLocations;
+  }
+
   const hasLatitude =
     latitude !== undefined && latitude !== null && latitude !== "";
   const hasLongitude =
@@ -359,10 +455,12 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
   if (hasLatitude && hasLongitude) {
     const parsedLatitude = parseCoordinate(latitude, "latitude", -90, 90);
     const parsedLongitude = parseCoordinate(longitude, "longitude", -180, 180);
-    user.location = {
-      latitude: parsedLatitude,
-      longitude: parsedLongitude,
-    };
+    if (!parsedWeeklyLocations) {
+      user.weeklyLocations = createWeeklyLocationsFromPoint(
+        parsedLatitude,
+        parsedLongitude,
+      );
+    }
   }
 
   if (req.file) {

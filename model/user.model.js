@@ -1,6 +1,15 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 import bcrypt from "bcryptjs";
 
+const locationPointSchema = new Schema(
+  {
+    day: { type: String },
+    latitude: { type: Number },
+    longitude: { type: Number },
+  },
+  { _id: false }
+);
+
 const userSchema = new Schema(
   {
     name: { type: String },
@@ -33,9 +42,14 @@ const userSchema = new Schema(
     address: {
       type: String,
     },
-    location: {
-      latitude: { type: Number },
-      longitude: { type: Number },
+    weeklyLocations: {
+      sunday: locationPointSchema,
+      monday: locationPointSchema,
+      tuesday: locationPointSchema,
+      wednesday: locationPointSchema,
+      thursday: locationPointSchema,
+      friday: locationPointSchema,
+      saturday: locationPointSchema,
     },
     site: {
       type: String,
