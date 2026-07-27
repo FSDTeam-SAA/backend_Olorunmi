@@ -743,22 +743,17 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   const userIds = users.map((item) => item._id);
 
   const checklistFilter = {
-    $or: [
-      {
-        status: "checked_out",
-        // checkOutType: "auto", // 👈 checked_out হলে auto must
-      },
-      {
-        status: {
-          $in: [
-            "checked_in_missed",
-            "user_outside_radius",
-            "checked_in",
-            "checked_in_not_ok",
-          ],
-        },
-      },
-    ],
+    status: {
+      $in: [
+        "checked_in",
+        "checked_out",
+        "checked_in_missed",
+        "user_outside_radius",
+        "back_inside_radius",
+        "re_checked_in",
+        "checked_in_not_ok",
+      ],
+    },
   };
 
   if (searchTerm) {
@@ -852,6 +847,48 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     $unwind: {
       path: "$user",
       preserveNullAndEmptyArrays: true,
+    },
+  },
+  {
+    $addFields: {
+      userName: "$user.name",
+      userId: "$user.userId",
+      alertType: "$status",
+      message: {
+        $switch: {
+          branches: [
+            {
+              case: { $eq: ["$status", "checked_in"] },
+              then: "Booked-In",
+            },
+            {
+              case: { $eq: ["$status", "checked_out"] },
+              then: "Booked-Off",
+            },
+            {
+              case: { $eq: ["$status", "checked_in_missed"] },
+              then: "Missed Check-In",
+            },
+            {
+              case: { $eq: ["$status", "user_outside_radius"] },
+              then: "Out side of location",
+            },
+            {
+              case: { $eq: ["$status", "back_inside_radius"] },
+              then: "Back to location",
+            },
+            {
+              case: { $eq: ["$status", "re_checked_in"] },
+              then: "Check-In: OK",
+            },
+            {
+              case: { $eq: ["$status", "checked_in_not_ok"] },
+              then: "Check-In: NOT OK",
+            },
+          ],
+          default: "$option",
+        },
+      },
     },
   },
 
