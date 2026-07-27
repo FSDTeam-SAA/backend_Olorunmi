@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 const locationPointSchema = new Schema(
   {
     day: { type: String },
+    site: { type: String, trim: true, default: "" },
     latitude: { type: Number },
     longitude: { type: Number },
   },

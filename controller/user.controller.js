@@ -79,7 +79,18 @@ const getDayLocationValue = (source, day, index) => {
   );
 };
 
-const parseWeeklyLocations = (value) => {
+const getFirstWeeklyLocationSite = (weeklyLocations = {}) => {
+  for (const day of daysOfWeek) {
+    const site = normalizeOptionalString(weeklyLocations?.[day]?.site);
+    if (site) {
+      return site;
+    }
+  }
+
+  return "";
+};
+
+const parseWeeklyLocations = (value, fallbackSite = "") => {
   if (value === undefined || value === null || value === "") return undefined;
 
   const source = parseJsonField(value, "weeklyLocations");
@@ -98,6 +109,7 @@ const parseWeeklyLocations = (value) => {
 
     weeklyLocations[day] = {
       day: String(dayLocation.day ?? day).trim() || day,
+      site: normalizeOptionalString(dayLocation.site ?? fallbackSite),
       latitude: parseCoordinate(
         dayLocation.latitude ?? dayLocation.lat,
         `weeklyLocations.${day}.latitude`,
@@ -116,9 +128,14 @@ const parseWeeklyLocations = (value) => {
   }, {});
 };
 
-const createWeeklyLocationsFromPoint = (latitude, longitude) =>
+const createWeeklyLocationsFromPoint = (latitude, longitude, site = "") =>
   daysOfWeek.reduce((weeklyLocations, day) => {
-    weeklyLocations[day] = { day, latitude, longitude };
+    weeklyLocations[day] = {
+      day,
+      site: normalizeOptionalString(site),
+      latitude,
+      longitude,
+    };
     return weeklyLocations;
   }, {});
 
@@ -257,7 +274,11 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     );
   }
 
-  const parsedWeeklyLocations = parseWeeklyLocations(weeklyLocations);
+  const normalizedSite = normalizeOptionalString(site);
+  const parsedWeeklyLocations = parseWeeklyLocations(
+    weeklyLocations,
+    normalizedSite,
+  );
   const isLatitudeMissing =
     latitude === undefined ||
     latitude === null ||
@@ -295,8 +316,10 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
     textPassword: password,
     weeklyLocations:
       parsedWeeklyLocations ??
-      createWeeklyLocationsFromPoint(parsedLatitude, parsedLongitude),
-    site: normalizeOptionalString(site),
+      createWeeklyLocationsFromPoint(parsedLatitude, parsedLongitude, normalizedSite),
+    site:
+      normalizedSite ||
+      getFirstWeeklyLocationSite(parsedWeeklyLocations),
     onShift: normalizeOptionalString(onShift),
     offShift: normalizeOptionalString(offShift),
     defaultRadius:
@@ -431,13 +454,16 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
   if (defaultRadius !== undefined) {
     user.defaultRadius = parseRadius(defaultRadius);
   }
-  if (site !== undefined) user.site = normalizeOptionalString(site);
+  const normalizedSite =
+    site !== undefined ? normalizeOptionalString(site) : user.site;
+  if (site !== undefined) user.site = normalizedSite;
   if (onShift !== undefined) user.onShift = normalizeOptionalString(onShift);
   if (offShift !== undefined) user.offShift = normalizeOptionalString(offShift);
 
-  const parsedWeeklyLocations = parseWeeklyLocations(weeklyLocations);
+  const parsedWeeklyLocations = parseWeeklyLocations(weeklyLocations, normalizedSite);
   if (parsedWeeklyLocations) {
     user.weeklyLocations = parsedWeeklyLocations;
+    user.site = normalizedSite || getFirstWeeklyLocationSite(parsedWeeklyLocations);
   }
 
   const hasLatitude =
@@ -459,6 +485,7 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
       user.weeklyLocations = createWeeklyLocationsFromPoint(
         parsedLatitude,
         parsedLongitude,
+        normalizedSite,
       );
     }
   }

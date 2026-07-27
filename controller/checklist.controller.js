@@ -57,10 +57,16 @@ const getChecklistLocalFields = (dateContext) => {
   return fields;
 };
 
-const getDailyReportHeaderFromUser = (user = {}) => {
+const getUserSiteForDay = (user = {}, day) => {
+  const dayKey = day?.toString().trim().toLowerCase();
+  const daySite = dayKey ? user?.weeklyLocations?.[dayKey]?.site : "";
+  return daySite || user.site;
+};
+
+const getDailyReportHeaderFromUser = (user = {}, day) => {
   const header = {};
   const fieldMap = {
-    site: user.site,
+    site: getUserSiteForDay(user, day),
     onShift: user.onShift,
     offShift: user.offShift,
     security: user.name || user.username || user.userId,
@@ -591,7 +597,7 @@ export const trackChecklist = catchAsync(async (req, res) => {
     user: req.user._id,
     date: workDate,
     day: dateContext.day,
-    header: getDailyReportHeaderFromUser(user),
+    header: getDailyReportHeaderFromUser(user, dateContext.day),
     entries: [
       {
         time: dateContext.time,
@@ -666,11 +672,15 @@ export const manualCheckoutChecklist = catchAsync(async (req, res) => {
 
   });
 
+  const checkoutUser = await User.findById(req.user._id).select(
+    "weeklyLocations site onShift offShift name username userId",
+  );
+
   await addDailyReportEntries({
     user: req.user._id,
     date: workDate,
     day: dateContext.day,
-    header: getDailyReportHeaderFromUser(req.user),
+    header: getDailyReportHeaderFromUser(checkoutUser || req.user, dateContext.day),
     entries: [
       {
         time: dateContext.time,

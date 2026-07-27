@@ -122,10 +122,16 @@ const hasText = (value) => String(value ?? "").trim().length > 0;
 const plainReport = (report) =>
   report?.toObject ? report.toObject({ virtuals: true }) : { ...report };
 
-const buildUserReportHeader = (user = {}) => {
+const getUserSiteForDay = (user = {}, day) => {
+  const dayKey = day?.toString().trim().toLowerCase();
+  const daySite = dayKey ? user?.weeklyLocations?.[dayKey]?.site : "";
+  return daySite || user.site;
+};
+
+const buildUserReportHeader = (user = {}, day) => {
   const header = {};
   const fieldMap = {
-    site: user.site,
+    site: getUserSiteForDay(user, day),
     onShift: user.onShift,
     offShift: user.offShift,
     security: user.name || user.username || user.userId,
@@ -139,8 +145,8 @@ const buildUserReportHeader = (user = {}) => {
   return header;
 };
 
-const buildCreateHeader = (body, user) => {
-  const userHeader = buildUserReportHeader(user);
+const buildCreateHeader = (body, user, day) => {
+  const userHeader = buildUserReportHeader(user, day);
   const bodyHeader = buildHeaderUpdate(body);
   const header = { ...userHeader };
 
@@ -154,7 +160,7 @@ const buildCreateHeader = (body, user) => {
 };
 
 const fillMissingReportHeader = (report, user) => {
-  const userHeader = buildUserReportHeader(user);
+  const userHeader = buildUserReportHeader(user, report?.day);
   let changed = false;
 
   Object.entries(userHeader).forEach(([field, value]) => {
@@ -170,7 +176,7 @@ const fillMissingReportHeader = (report, user) => {
 const serializeReportWithUserHeader = (report, user) => {
   if (!report) return report;
   const response = plainReport(report);
-  const userHeader = buildUserReportHeader(user);
+  const userHeader = buildUserReportHeader(user, response.day);
 
   console.log(`[REPORT] user site=${userHeader.site || ""}`);
   console.log(`[REPORT] user onShift=${userHeader.onShift || ""}`);
@@ -213,7 +219,7 @@ const resolveReportUser = async (report, fallbackUser) => {
   if (!reportUserId) return fallbackUser;
 
   return User.findById(reportUserId).select(
-    "name username userId site onShift offShift",
+    "name username userId site weeklyLocations onShift offShift",
   );
 };
 
@@ -794,7 +800,7 @@ export const createReport = catchAsync(async (req, res) => {
       entryImageMap,
     });
   }
-  const header = buildCreateHeader(req.body, req.user);
+  const header = buildCreateHeader(req.body, req.user, dateContext.day);
 
   if (!entries.length && !Object.keys(header).length) {
     throw new AppError(
@@ -853,7 +859,7 @@ export const getAllReports = catchAsync(async (req, res) => {
 
   const [reports, total] = await Promise.all([
     Report.find(filter)
-      .populate("user", "name userId email site onShift offShift")
+      .populate("user", "name userId email site weeklyLocations onShift offShift")
       .sort({ reportDate: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit),
