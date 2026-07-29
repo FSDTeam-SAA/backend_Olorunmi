@@ -59,6 +59,18 @@ const daysOfWeek = [
   "saturday",
 ];
 
+const parseBoolean = (value) => value === true || value === "true";
+
+const parseWeeklyCoordinate = (value, fieldName, min, max, isWeekend) => {
+  const isMissing = value === undefined || value === null || value === "";
+
+  if (isWeekend && isMissing) {
+    return null;
+  }
+
+  return parseCoordinate(value, fieldName, min, max);
+};
+
 const parseJsonField = (value, fieldName) => {
   if (typeof value !== "string") return value;
 
@@ -81,6 +93,8 @@ const getDayLocationValue = (source, day, index) => {
 
 const getFirstWeeklyLocationSite = (weeklyLocations = {}) => {
   for (const day of daysOfWeek) {
+    if (weeklyLocations?.[day]?.isWeekend) continue;
+
     const site = normalizeOptionalString(weeklyLocations?.[day]?.site);
     if (site) {
       return site;
@@ -107,23 +121,30 @@ const parseWeeklyLocations = (value, fallbackSite = "") => {
       );
     }
 
+    const isWeekend = parseBoolean(dayLocation.isWeekend);
+
     weeklyLocations[day] = {
       day: String(dayLocation.day ?? day).trim() || day,
-      site: normalizeOptionalString(dayLocation.site ?? fallbackSite),
-      onShift: normalizeOptionalString(dayLocation.onShift),
-      offShift: normalizeOptionalString(dayLocation.offShift),
-      latitude: parseCoordinate(
+      site: isWeekend
+        ? normalizeOptionalString(dayLocation.site)
+        : normalizeOptionalString(dayLocation.site ?? fallbackSite),
+      onShift: isWeekend ? "" : normalizeOptionalString(dayLocation.onShift),
+      offShift: isWeekend ? "" : normalizeOptionalString(dayLocation.offShift),
+      latitude: parseWeeklyCoordinate(
         dayLocation.latitude ?? dayLocation.lat,
         `weeklyLocations.${day}.latitude`,
         -90,
         90,
+        isWeekend,
       ),
-      longitude: parseCoordinate(
+      longitude: parseWeeklyCoordinate(
         dayLocation.longitude ?? dayLocation.lng,
         `weeklyLocations.${day}.longitude`,
         -180,
         180,
+        isWeekend,
       ),
+      isWeekend,
     };
 
     return weeklyLocations;
@@ -139,6 +160,7 @@ const createWeeklyLocationsFromPoint = (latitude, longitude, site = "") =>
       offShift: "",
       latitude,
       longitude,
+      isWeekend: false,
     };
     return weeklyLocations;
   }, {});

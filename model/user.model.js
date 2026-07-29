@@ -9,6 +9,7 @@ const locationPointSchema = new Schema(
     offShift: { type: String, trim: true, default: "" },
     latitude: { type: Number },
     longitude: { type: Number },
+    isWeekend: { type: Boolean, default: false },
   },
   { _id: false }
 );

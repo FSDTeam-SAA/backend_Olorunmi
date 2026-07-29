@@ -124,14 +124,18 @@ const plainReport = (report) =>
 
 const getUserSiteForDay = (user = {}, day) => {
   const dayKey = day?.toString().trim().toLowerCase();
-  const daySite = dayKey ? user?.weeklyLocations?.[dayKey]?.site : "";
-  return daySite || user.site;
+  const weeklyLocation = dayKey ? user?.weeklyLocations?.[dayKey] : undefined;
+  if (weeklyLocation?.isWeekend) return "";
+
+  return weeklyLocation?.site || user.site;
 };
 
 const getUserShiftForDay = (user = {}, day, field) => {
   const dayKey = day?.toString().trim().toLowerCase();
-  const dayShift = dayKey ? user?.weeklyLocations?.[dayKey]?.[field] : "";
-  return dayShift || user[field];
+  const weeklyLocation = dayKey ? user?.weeklyLocations?.[dayKey] : undefined;
+  if (weeklyLocation?.isWeekend) return "";
+
+  return weeklyLocation?.[field] || user[field];
 };
 
 const buildUserReportHeader = (user = {}, day) => {
