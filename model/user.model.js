@@ -5,6 +5,8 @@ const locationPointSchema = new Schema(
   {
     day: { type: String },
     site: { type: String, trim: true, default: "" },
+    onShift: { type: String, trim: true, default: "" },
+    offShift: { type: String, trim: true, default: "" },
     latitude: { type: Number },
     longitude: { type: Number },
   },

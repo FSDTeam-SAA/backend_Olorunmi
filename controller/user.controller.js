@@ -110,6 +110,8 @@ const parseWeeklyLocations = (value, fallbackSite = "") => {
     weeklyLocations[day] = {
       day: String(dayLocation.day ?? day).trim() || day,
       site: normalizeOptionalString(dayLocation.site ?? fallbackSite),
+      onShift: normalizeOptionalString(dayLocation.onShift),
+      offShift: normalizeOptionalString(dayLocation.offShift),
       latitude: parseCoordinate(
         dayLocation.latitude ?? dayLocation.lat,
         `weeklyLocations.${day}.latitude`,
@@ -133,6 +135,8 @@ const createWeeklyLocationsFromPoint = (latitude, longitude, site = "") =>
     weeklyLocations[day] = {
       day,
       site: normalizeOptionalString(site),
+      onShift: "",
+      offShift: "",
       latitude,
       longitude,
     };

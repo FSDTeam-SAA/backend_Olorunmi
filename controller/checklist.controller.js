@@ -63,12 +63,18 @@ const getUserSiteForDay = (user = {}, day) => {
   return daySite || user.site;
 };
 
+const getUserShiftForDay = (user = {}, day, field) => {
+  const dayKey = day?.toString().trim().toLowerCase();
+  const dayShift = dayKey ? user?.weeklyLocations?.[dayKey]?.[field] : "";
+  return dayShift || user[field];
+};
+
 const getDailyReportHeaderFromUser = (user = {}, day) => {
   const header = {};
   const fieldMap = {
     site: getUserSiteForDay(user, day),
-    onShift: user.onShift,
-    offShift: user.offShift,
+    onShift: getUserShiftForDay(user, day, "onShift"),
+    offShift: getUserShiftForDay(user, day, "offShift"),
     security: user.name || user.username || user.userId,
   };
 
