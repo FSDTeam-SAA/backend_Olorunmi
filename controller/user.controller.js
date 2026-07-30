@@ -121,15 +121,16 @@ const parseWeeklyLocations = (value, fallbackSite = "") => {
       );
     }
 
-    const isWeekend = parseBoolean(dayLocation.isWeekend);
+    const isWeekend =
+      parseBoolean(dayLocation.isWeekend) || parseBoolean(dayLocation.isOff);
 
     weeklyLocations[day] = {
       day: String(dayLocation.day ?? day).trim() || day,
       site: isWeekend
         ? normalizeOptionalString(dayLocation.site)
         : normalizeOptionalString(dayLocation.site ?? fallbackSite),
-      onShift: isWeekend ? "" : normalizeOptionalString(dayLocation.onShift),
-      offShift: isWeekend ? "" : normalizeOptionalString(dayLocation.offShift),
+      onShift: normalizeOptionalString(dayLocation.onShift),
+      offShift: normalizeOptionalString(dayLocation.offShift),
       latitude: parseWeeklyCoordinate(
         dayLocation.latitude ?? dayLocation.lat,
         `weeklyLocations.${day}.latitude`,
