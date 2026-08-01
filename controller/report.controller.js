@@ -270,13 +270,25 @@ const saveReportImages = async (files = []) => {
   );
 };
 
-const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
+const entryImageMapTargetsEntry = (entryImageMap = [], entryIndex) =>
+  entryImageMap.some((imageMap) => {
+    const target = imageMap?.target?.toString();
+    if (target && target !== "entries") return false;
+    return Number(imageMap?.entryIndex) === entryIndex;
+  });
+
+const buildEntries = (
+  body,
+  uploadedImages,
+  defaultTime = getCurrentTime(),
+  entryImageMap = [],
+) => {
   let entries = [];
 
   if (body.entries !== undefined) {
     entries = parseJsonArray(body.entries, "entries").map((entry) => ({
       time: entry.time || defaultTime,
-      description: entry.description,
+      description: entry.description || "",
       systemEntryType: incomingSystemEntryType(entry),
       images: [],
     }));
@@ -304,16 +316,18 @@ const buildEntries = (body, uploadedImages, defaultTime = getCurrentTime()) => {
     return [];
   }
 
-  entries.forEach((entry) => {
-    if (!entry.description) {
-      throw new AppError(httpStatus.BAD_REQUEST, "Each entry needs description");
-    }
-  });
-
   const imageEntryIndex = Math.min(
     Math.max(Number(body.imageEntryIndex) || 0, 0),
     entries.length - 1,
   );
+
+  entries.forEach((entry, index) => {
+    const hasMappedImage = entryImageMapTargetsEntry(entryImageMap, index);
+    const hasFallbackImage = uploadedImages.length && index === imageEntryIndex;
+    if (!entry.description && !hasMappedImage && !hasFallbackImage) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Each entry needs description");
+    }
+  });
 
   entries[imageEntryIndex].images = uploadedImages;
 
@@ -586,7 +600,12 @@ const updateReportDocument = async (req, report) => {
 
   let newEntries = [];
   if (!targetEntry && willAppendEntries) {
-    newEntries = buildEntries(req.body, [], getRequestDateContext(req).time);
+    newEntries = buildEntries(
+      req.body,
+      [],
+      getRequestDateContext(req).time,
+      entryImageMap,
+    );
   }
 
   const uploadedImages = await saveReportImages(req.files);
@@ -801,6 +820,7 @@ export const createReport = catchAsync(async (req, res) => {
     req.body,
     entryImageMap.length ? [] : uploadedImages,
     dateContext.time,
+    entryImageMap,
   );
   if (entryImageMap.length && uploadedImages.length) {
     applyMappedUploadedImages({
