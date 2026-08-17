@@ -10,6 +10,7 @@ import { Server } from "socket.io";
 import globalErrorHandler from "./middleware/globalErrorHandler.js";
 import notFound from "./middleware/notFound.js";
 import { startChecklistMissedCron } from "./cron/checklistMissed.cron.js";
+import { setSocketServer } from "./utils/socket.js";
 
 const app = express();
 
@@ -22,6 +23,8 @@ export const io = new Server(server, {
     methods: ["GET", "POST"],
   },
 });
+
+setSocketServer(io);
 
 app.use(
   cors({

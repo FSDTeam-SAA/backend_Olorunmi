@@ -5,7 +5,10 @@ import sendResponse from "../utils/sendResponse.js";
 import { Checklist } from "../model/checklist.model.js";
 import { User } from "../model/user.model.js";
 import { addDailyReportEntries } from "./report.controller.js";
-import { sendPushNotification } from "../utils/sendPushNotification.js";
+import {
+  notifyAdmins,
+  sendPushNotification,
+} from "../utils/sendPushNotification.js";
 import { getRequestDateContext } from "../utils/dateTime.js";
 
 const toRadians = (value) => (value * Math.PI) / 180;
@@ -115,13 +118,6 @@ const isRecentMissedResponse = (checklist, now) => {
     checklist.checkInAt || checklist.createdAt,
   ).getTime();
   return now.getTime() - eventAt < RECHECK_INTERVAL_MS;
-};
-
-const notifyAdmins = async (title, message) => {
-  const admins = await User.find({ role: "admin" }).select("_id");
-  const adminIds = admins.map((admin) => admin._id);
-  if (!adminIds.length) return;
-  await sendPushNotification(adminIds, title, message);
 };
 
 const createOutsideRadiusRecord = async ({

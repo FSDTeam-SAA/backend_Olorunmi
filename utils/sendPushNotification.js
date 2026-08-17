@@ -1,12 +1,22 @@
 // import { FCM } from "../module/fcm/fcm.model.js";
 import { FCM } from "../model/fcm.model.js";
+import { User } from "../model/user.model.js";
 import admin from "./firebase.js";
 // import User from "../models/User";
+
+// FCM only accepts string values inside the data payload.
+const toStringDataPayload = (data) =>
+  Object.entries(data).reduce((payload, [key, value]) => {
+    if (value === undefined || value === null) return payload;
+    payload[key] = String(value);
+    return payload;
+  }, {});
 
 export const sendPushNotification = async (
   userIds,
   title,
-  body
+  body,
+  data
 ) => {
   try {
     // Get users with FCM tokens
@@ -33,8 +43,22 @@ export const sendPushNotification = async (
         title,
         body,
       },
+      android: {
+        priority: "high",
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
       tokens,
     };
+
+    if (data && Object.keys(data).length) {
+      message.data = toStringDataPayload(data);
+    }
 
     const response = await admin.messaging().sendEachForMulticast(message);
 
@@ -42,4 +66,14 @@ export const sendPushNotification = async (
   } catch (error) {
     console.error("FCM Error:", error);
   }
+};
+
+/**
+ * Sends a push notification to every admin account.
+ */
+export const notifyAdmins = async (title, message, data) => {
+  const admins = await User.find({ role: "admin" }).select("_id");
+  const adminIds = admins.map((adminUser) => adminUser._id);
+  if (!adminIds.length) return;
+  await sendPushNotification(adminIds, title, message, data);
 };
