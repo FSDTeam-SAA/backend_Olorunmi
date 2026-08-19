@@ -42,7 +42,7 @@ const getLocalDateTimeFields = (date, timezone) => {
       timeZone: timezone,
       hour: "2-digit",
       minute: "2-digit",
-      hour12: true,
+      hour12: false,
     }).formatToParts(date);
     const dateTimeValues = Object.fromEntries(
       dateTimeParts.map((part) => [part.type, part.value]),
@@ -60,7 +60,7 @@ const getLocalDateTimeFields = (date, timezone) => {
         `.${pad(date.getUTCMilliseconds(), 3)}`,
         offset || "",
       ].join(""),
-      localTime: `${displayTimeValues.hour}:${displayTimeValues.minute} ${displayTimeValues.dayPeriod}`,
+      localTime: `${displayTimeValues.hour}:${displayTimeValues.minute}`,
     };
   } catch {
     return {};

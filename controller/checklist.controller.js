@@ -740,6 +740,10 @@ export const getMyChecklists = catchAsync(async (req, res) => {
 export const getAdminAlerts = catchAsync(async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
   const searchTerm = req.query.search?.trim();
+  // When enabled, collapse the list to a single row per user holding their
+  // latest alert. History is untouched — this only changes what is returned here.
+  const latestPerUser =
+    req.query.latestPerUser === "true" || req.query.latestPerUser === "1";
 
   const userFilter = {};
   if (searchTerm) {
@@ -832,10 +836,12 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   },
   {
     $group: {
-      _id: {
-        user: "$user",
-        date: "$workDate",
-      },
+      _id: latestPerUser
+        ? "$user"
+        : {
+            user: "$user",
+            date: "$workDate",
+          },
       checklist: { $first: "$$ROOT" },
     },
   },

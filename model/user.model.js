@@ -5,6 +5,9 @@ const locationPointSchema = new Schema(
   {
     day: { type: String },
     site: { type: String, trim: true, default: "" },
+    // Name of the location (under `site`) chosen in Location Management.
+    // Coordinates below stay a snapshot, so the row survives that record changing.
+    locationName: { type: String, trim: true, default: "" },
     onShift: { type: String, trim: true, default: "" },
     offShift: { type: String, trim: true, default: "" },
     latitude: { type: Number },
