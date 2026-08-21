@@ -391,13 +391,17 @@ export const getUsersForAdmin = catchAsync(async (req, res) => {
   }
 
   const [users, total] = await Promise.all([
+    // .lean() skips Mongoose document hydration for what is a read-only list
+    // response. The schema has no virtuals or toJSON transforms, so the JSON
+    // sent to the client is unchanged.
     User.find(filter)
       .select(
         "-password -refreshToken -verificationInfo -password_reset_token -__v +textPassword",
       )
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(limit)
+      .lean(),
     User.countDocuments(filter),
   ]);
 
@@ -429,8 +433,8 @@ export const getUserDetailsForAdmin = catchAsync(async (req, res) => {
   }
 
   const [checklists, reports] = await Promise.all([
-    Checklist.find({ user: id }).sort({ createdAt: -1 }).limit(31),
-    Report.find({ user: id }).sort({ createdAt: -1 }).limit(20),
+    Checklist.find({ user: id }).sort({ createdAt: -1 }).limit(31).lean(),
+    Report.find({ user: id }).sort({ createdAt: -1 }).limit(20).lean(),
   ]);
 
   sendResponse(res, {

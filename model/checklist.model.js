@@ -89,6 +89,14 @@ const checklistSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+// The admin alerts feed matches on `status` and sorts by `createdAt`. Without a
+// compound index Mongo has to sort the whole matched set in memory, which is
+// invisible on small local data and slow against a real dataset.
+checklistSchema.index({ status: 1, createdAt: -1 });
+
+// Serves the per-user alert grouping and the user history lookups.
+checklistSchema.index({ user: 1, createdAt: -1 });
+
 checklistSchema.index(
   { missedResponseFor: 1 },
   {

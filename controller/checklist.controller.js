@@ -753,9 +753,6 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     ];
   }
 
-  const users = await User.find(userFilter).select("_id");
-  const userIds = users.map((item) => item._id);
-
   const checklistFilter = {
     status: {
       $in: [
@@ -770,8 +767,12 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     },
   };
 
+  // Only resolve matching user ids when a search term is actually present.
+  // This previously ran on every request — including the dashboard's 5s poll —
+  // and scanned the whole users collection for a result that went unused.
   if (searchTerm) {
-    checklistFilter.user = { $in: userIds };
+    const users = await User.find(userFilter).select("_id").lean();
+    checklistFilter.user = { $in: users.map((item) => item._id) };
   }
 
   // const result = await Checklist.aggregate([
@@ -827,106 +828,105 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   //   },
   // ]);
 
-  const result = await Checklist.aggregate([
-  {
-    $match: checklistFilter,
-  },
-  {
-    $sort: { createdAt: -1 }, // latest document per user/day
-  },
-  {
-    $group: {
-      _id: latestPerUser
-        ? "$user"
-        : {
-            user: "$user",
-            date: "$workDate",
-          },
-      checklist: { $first: "$$ROOT" },
+  // The grouping stages are shared by the page query and the count query.
+  // Pagination happens before the $lookup so the join and the computed alert
+  // fields only run over the rows actually being returned, rather than over
+  // every grouped row in the collection.
+  const groupingStages = [
+    {
+      $match: checklistFilter,
     },
-  },
-  {
-    $replaceRoot: {
-      newRoot: "$checklist",
+    {
+      $sort: { createdAt: -1 }, // latest document per user/day
     },
-  },
-
-  {
-    $lookup: {
-      from: "users",
-      localField: "user",
-      foreignField: "_id",
-      as: "user",
-    },
-  },
-  {
-    $unwind: {
-      path: "$user",
-      preserveNullAndEmptyArrays: true,
-    },
-  },
-  {
-    $addFields: {
-      userName: "$user.name",
-      userId: "$user.userId",
-      alertType: "$status",
-      message: {
-        $switch: {
-          branches: [
-            {
-              case: { $eq: ["$status", "checked_in"] },
-              then: "Booked-In",
+    {
+      $group: {
+        _id: latestPerUser
+          ? "$user"
+          : {
+              user: "$user",
+              date: "$workDate",
             },
-            {
-              case: { $eq: ["$status", "checked_out"] },
-              then: "Booked-Off",
-            },
-            {
-              case: { $eq: ["$status", "checked_in_missed"] },
-              then: "Missed Check-In",
-            },
-            {
-              case: { $eq: ["$status", "user_outside_radius"] },
-              then: "Out side of location",
-            },
-            {
-              case: { $eq: ["$status", "back_inside_radius"] },
-              then: "Back to location",
-            },
-            {
-              case: { $eq: ["$status", "re_checked_in"] },
-              then: "Check-In: OK",
-            },
-            {
-              case: { $eq: ["$status", "checked_in_not_ok"] },
-              then: "Check-In: NOT OK",
-            },
-          ],
-          default: "$option",
-        },
+        checklist: { $first: "$$ROOT" },
       },
     },
-  },
-
-  // Sort final grouped results
-  {
-    $sort: { createdAt: -1 },
-  },
-  {
-    $facet: {
-      data: [
-        { $skip: skip },
-        { $limit: limit },
-      ],
-      total: [
-        { $count: "count" },
-      ],
+    {
+      $replaceRoot: {
+        newRoot: "$checklist",
+      },
     },
-  },
-]);
+  ];
 
-  const alerts = result[0].data;
-  const total = result[0].total[0]?.count || 0;
+  const [alerts, countResult] = await Promise.all([
+    Checklist.aggregate([
+      ...groupingStages,
+      // Sort final grouped results
+      {
+        $sort: { createdAt: -1 },
+      },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "users",
+          localField: "user",
+          foreignField: "_id",
+          as: "user",
+        },
+      },
+      {
+        $unwind: {
+          path: "$user",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $addFields: {
+          userName: "$user.name",
+          userId: "$user.userId",
+          alertType: "$status",
+          message: {
+            $switch: {
+              branches: [
+                {
+                  case: { $eq: ["$status", "checked_in"] },
+                  then: "Booked-In",
+                },
+                {
+                  case: { $eq: ["$status", "checked_out"] },
+                  then: "Booked-Off",
+                },
+                {
+                  case: { $eq: ["$status", "checked_in_missed"] },
+                  then: "Missed Check-In",
+                },
+                {
+                  case: { $eq: ["$status", "user_outside_radius"] },
+                  then: "Out side of location",
+                },
+                {
+                  case: { $eq: ["$status", "back_inside_radius"] },
+                  then: "Back to location",
+                },
+                {
+                  case: { $eq: ["$status", "re_checked_in"] },
+                  then: "Check-In: OK",
+                },
+                {
+                  case: { $eq: ["$status", "checked_in_not_ok"] },
+                  then: "Check-In: NOT OK",
+                },
+              ],
+              default: "$option",
+            },
+          },
+        },
+      },
+    ]),
+    Checklist.aggregate([...groupingStages, { $count: "count" }]),
+  ]);
+
+  const total = countResult[0]?.count || 0;
 
   sendResponse(res, {
     statusCode: httpStatus.OK,

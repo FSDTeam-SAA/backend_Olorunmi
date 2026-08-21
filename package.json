@@ -17,6 +17,7 @@
     "bcryptjs": "^3.0.2",
     "braintree": "^3.31.0",
     "cloudinary": "^2.6.1",
+    "compression": "^1.8.1",
     "config": "^4.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

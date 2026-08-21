@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import mongoose from "mongoose";
 import cookieParser from "cookie-parser";
 import router from "./mainroute/index.js";
@@ -34,11 +35,22 @@ app.use(
   })
 );
 
+// Responses were being sent uncompressed. On loopback that is free; over a WAN
+// link from the VPS it is the difference between a small and a large transfer
+// for every list payload the dashboard fetches.
+app.use(compression());
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-app.use("/public", express.static("public"));
+app.use(
+  "/public",
+  express.static("public", {
+    maxAge: "7d",
+    etag: true,
+  })
+);
 
 // Mount the main router
 app.use("/api/v1", router);

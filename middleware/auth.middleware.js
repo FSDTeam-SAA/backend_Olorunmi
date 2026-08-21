@@ -9,10 +9,21 @@ export const protect = async (req, res, next) => {
 
   try {
     const decoded = await jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-    const user = await User.findById(decoded._id);
-    if (!user || !(await User.isOTPVerified(user._id))) {
+
+    // `verificationInfo` is select:false, so it is pulled in here explicitly.
+    // Previously this was a second User.findById via User.isOTPVerified(),
+    // which meant two round trips to the database for the same document on
+    // every authenticated request.
+    const user = await User.findById(decoded._id).select("+verificationInfo");
+
+    if (!user || !user.verificationInfo?.verified) {
       throw new AppError(httpStatus.UNAUTHORIZED, "Unauthorized user");
     }
+
+    // Keep req.user shaped exactly as before, so the extra field can never be
+    // serialized into a response by downstream controllers.
+    delete user._doc.verificationInfo;
+
     req.user = user;
     next();
   } catch (err) {
