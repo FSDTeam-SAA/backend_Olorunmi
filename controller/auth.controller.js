@@ -89,6 +89,12 @@ export const login = catchAsync(async (req, res) => {
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
+  if (user.status === "disabled") {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "This account has been disabled. Please contact an administrator.",
+    );
+  }
   if (
     user?.password &&
     !(await User.isPasswordMatched(password, user.password))

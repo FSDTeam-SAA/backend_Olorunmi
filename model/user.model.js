@@ -38,6 +38,11 @@ const userSchema = new Schema(
       default: "user",
       enum: ["user", "admin"],
     },
+    status: {
+      type: String,
+      default: "active",
+      enum: ["active", "disabled"],
+    },
     avatar: {
       public_id: { type: String, default: "" },
       url: { type: String, default: "" },

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import httpStatus from "http-status";
 import AppError from "../errors/AppError.js";
 import catchAsync from "../utils/catchAsync.js";
@@ -737,6 +738,14 @@ export const getMyChecklists = catchAsync(async (req, res) => {
   });
 });
 
+// Alert types the summary cards on the dashboard show counts for.
+const CARD_ALERT_STATUSES = [
+  "checked_in",
+  "checked_in_missed",
+  "user_outside_radius",
+  "checked_out",
+];
+
 export const getAdminAlerts = catchAsync(async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
   const searchTerm = req.query.search?.trim();
@@ -744,6 +753,72 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   // latest alert. History is untouched — this only changes what is returned here.
   const latestPerUser =
     req.query.latestPerUser === "true" || req.query.latestPerUser === "1";
+  const dateFrom = req.query.dateFrom?.trim();
+  const dateTo = req.query.dateTo?.trim();
+  const alertType = req.query.alertType?.trim();
+  const userId = req.query.user?.trim();
+  // A single alert status requested here bypasses the per-user/day dedup
+  // grouping below entirely — used by the summary-card dialogs, which need
+  // every matching event (the same raw count the card itself shows), not
+  // just the latest one per user.
+  const rawType = req.query.type?.trim();
+
+  if (rawType) {
+    const rawMatchFilter = { status: rawType };
+    if (dateFrom || dateTo) {
+      rawMatchFilter.workDate = {};
+      if (dateFrom) rawMatchFilter.workDate.$gte = dateFrom;
+      if (dateTo) rawMatchFilter.workDate.$lte = dateTo;
+    } else {
+      rawMatchFilter.workDate = getRequestDateContext(req).workDate;
+    }
+
+    const [alerts, total] = await Promise.all([
+      Checklist.aggregate([
+        { $match: rawMatchFilter },
+        { $sort: { createdAt: -1 } },
+        { $skip: skip },
+        { $limit: limit },
+        {
+          $lookup: {
+            from: "users",
+            localField: "user",
+            foreignField: "_id",
+            as: "user",
+          },
+        },
+        {
+          $unwind: {
+            path: "$user",
+            preserveNullAndEmptyArrays: true,
+          },
+        },
+        {
+          $addFields: {
+            userName: "$user.name",
+            userId: "$user.userId",
+            alertType: "$status",
+          },
+        },
+      ]),
+      Checklist.countDocuments(rawMatchFilter),
+    ]);
+
+    return sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      message: "Alerts fetched successfully",
+      data: {
+        alerts,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(Math.ceil(total / limit), 1),
+        },
+      },
+    });
+  }
 
   const userFilter = {};
   if (searchTerm) {
@@ -754,23 +829,37 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   }
 
   const checklistFilter = {
-    status: {
-      $in: [
-        "checked_in",
-        "checked_out",
-        "checked_in_missed",
-        "user_outside_radius",
-        "back_inside_radius",
-        "re_checked_in",
-        "checked_in_not_ok",
-      ],
-    },
+    status: alertType && alertType !== "all"
+      ? alertType
+      : {
+          $in: [
+            "checked_in",
+            "checked_out",
+            "checked_in_missed",
+            "user_outside_radius",
+            "back_inside_radius",
+            "re_checked_in",
+            "checked_in_not_ok",
+          ],
+        },
   };
 
-  // Only resolve matching user ids when a search term is actually present.
-  // This previously ran on every request — including the dashboard's 5s poll —
-  // and scanned the whole users collection for a result that went unused.
-  if (searchTerm) {
+  if (dateFrom || dateTo) {
+    checklistFilter.workDate = {};
+    if (dateFrom) checklistFilter.workDate.$gte = dateFrom;
+    if (dateTo) checklistFilter.workDate.$lte = dateTo;
+  } else {
+    // No explicit range selected — default the main table to today only,
+    // matching the summary-card counts' own default (see `cardCountFilter`).
+    checklistFilter.workDate = getRequestDateContext(req).workDate;
+  }
+
+  if (userId && userId !== "all") {
+    checklistFilter.user = new mongoose.Types.ObjectId(userId);
+  } else if (searchTerm) {
+    // Only resolve matching user ids when a search term is actually present.
+    // This previously ran on every request — including the dashboard's 5s poll —
+    // and scanned the whole users collection for a result that went unused.
     const users = await User.find(userFilter).select("_id").lean();
     checklistFilter.user = { $in: users.map((item) => item._id) };
   }
@@ -857,7 +946,18 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     },
   ];
 
-  const [alerts, countResult] = await Promise.all([
+  // Summary-card counts are total matching events (not deduped/paginated),
+  // scoped to the selected date range — or today, when no range is given.
+  const cardCountFilter = { status: { $in: CARD_ALERT_STATUSES } };
+  if (dateFrom || dateTo) {
+    cardCountFilter.workDate = {};
+    if (dateFrom) cardCountFilter.workDate.$gte = dateFrom;
+    if (dateTo) cardCountFilter.workDate.$lte = dateTo;
+  } else {
+    cardCountFilter.workDate = getRequestDateContext(req).workDate;
+  }
+
+  const [alerts, countResult, cardCountResult] = await Promise.all([
     Checklist.aggregate([
       ...groupingStages,
       // Sort final grouped results
@@ -924,9 +1024,25 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
       },
     ]),
     Checklist.aggregate([...groupingStages, { $count: "count" }]),
+    Checklist.aggregate([
+      { $match: cardCountFilter },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]),
   ]);
 
   const total = countResult[0]?.count || 0;
+
+  const cardCountsByStatus = cardCountResult.reduce((accumulator, entry) => {
+    accumulator[entry._id] = entry.count;
+    return accumulator;
+  }, {});
+
+  const counts = {
+    bookedIn: cardCountsByStatus.checked_in || 0,
+    missedCheckIn: cardCountsByStatus.checked_in_missed || 0,
+    outOfLocation: cardCountsByStatus.user_outside_radius || 0,
+    bookedOff: cardCountsByStatus.checked_out || 0,
+  };
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -934,6 +1050,7 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     message: "Alerts fetched successfully",
     data: {
       alerts,
+      counts,
       pagination: {
         page,
         limit,

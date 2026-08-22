@@ -20,6 +20,13 @@ export const protect = async (req, res, next) => {
       throw new AppError(httpStatus.UNAUTHORIZED, "Unauthorized user");
     }
 
+    if (user.status === "disabled") {
+      throw new AppError(
+        httpStatus.FORBIDDEN,
+        "This account has been disabled. Please contact an administrator.",
+      );
+    }
+
     // Keep req.user shaped exactly as before, so the extra field can never be
     // serialized into a response by downstream controllers.
     delete user._doc.verificationInfo;

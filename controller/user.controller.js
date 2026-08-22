@@ -380,8 +380,14 @@ export const createUserByAdmin = catchAsync(async (req, res) => {
 export const getUsersForAdmin = catchAsync(async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
   const searchTerm = req.query.search?.trim();
+  const roleFilter = req.query.role?.trim();
 
-  const filter = { role: { $ne: "admin" } };
+  const filter =
+    roleFilter === "admin"
+      ? { role: "admin" }
+      : roleFilter === "all"
+        ? {}
+        : { role: { $ne: "admin" } };
 
   if (searchTerm) {
     filter.$or = [
@@ -462,6 +468,7 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
     site,
     onShift,
     offShift,
+    status,
   } =
     req.body;
 
@@ -469,6 +476,16 @@ export const updateUserByAdmin = catchAsync(async (req, res) => {
 
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  if (status !== undefined) {
+    if (!["active", "disabled"].includes(status)) {
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        "status must be either 'active' or 'disabled'",
+      );
+    }
+    user.status = status;
   }
 
   if (userId && userId !== user.userId) {

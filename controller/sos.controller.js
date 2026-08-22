@@ -281,7 +281,8 @@ export const acknowledgeSos = catchAsync(async (req, res) => {
     await sendPushNotification(
       [sos.user._id],
       "SOS Acknowledged",
-      `${acknowledgedPayload.acknowledgedBy} has acknowledged your SOS alert.`,
+      // `${acknowledgedPayload.acknowledgedBy} has acknowledged your SOS alert.`,
+      `Admin has acknowledged your SOS alert.`,
       acknowledgedPayload,
     );
   }
