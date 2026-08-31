@@ -746,6 +746,51 @@ const CARD_ALERT_STATUSES = [
   "checked_out",
 ];
 
+// "Today", evaluated per guard rather than once for the whole request.
+//
+// `getRequestDateContext(req)` resolves "today" from the caller's own timezone,
+// which is right for the guard-originated check-in/checkout routes (the mobile
+// app sends its zone) but wrong here: the dashboard sends no zone, so it fell
+// back to the server's UTC date. That single global string rolls over at 18:00
+// for an America/Edmonton guard, so their evening activity dropped out of
+// "today" while it was still their afternoon — and no single observer's zone
+// (server's or admin's) can be right when guards in several zones are being
+// monitored at once.
+//
+// `workDate` is already stored as the guard's own local calendar day, and each
+// document records the `timezone` it was written in, so "today" is resolved
+// against that per-document zone instead.
+//
+// The `$in` narrows on the indexed `workDate` before the per-document
+// comparison runs. Local dates worldwide span UTC-12..UTC+14, so at most three
+// calendar dates can be "today" anywhere; the `$expr` then picks the exactly
+// correct one for each document's own zone.
+const buildGuardLocalTodayFilter = (now = new Date()) => {
+  const candidateWorkDates = [-1, 0, 1].map((dayOffset) =>
+    new Date(now.getTime() + dayOffset * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10),
+  );
+
+  return {
+    workDate: { $in: candidateWorkDates },
+    $expr: {
+      $eq: [
+        "$workDate",
+        {
+          $dateToString: {
+            date: now,
+            format: "%Y-%m-%d",
+            // Documents predating the timezone field fall back to the previous
+            // server-UTC behaviour rather than dropping out of the results.
+            timezone: { $ifNull: ["$timezone", "UTC"] },
+          },
+        },
+      ],
+    },
+  };
+};
+
 export const getAdminAlerts = catchAsync(async (req, res) => {
   const { page, limit, skip } = parsePagination(req.query);
   const searchTerm = req.query.search?.trim();
@@ -770,7 +815,89 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
       if (dateFrom) rawMatchFilter.workDate.$gte = dateFrom;
       if (dateTo) rawMatchFilter.workDate.$lte = dateTo;
     } else {
-      rawMatchFilter.workDate = getRequestDateContext(req).workDate;
+      Object.assign(rawMatchFilter, buildGuardLocalTodayFilter());
+    }
+
+    // Card dialog's per-user expand: scope the raw event list down to a
+    // single user, under the same type + date-scope filter above.
+    const expandUserId = req.query.expandUser?.trim();
+    if (expandUserId) {
+      rawMatchFilter.user = new mongoose.Types.ObjectId(expandUserId);
+    }
+
+    // Card dialog's default view: one row per user holding their latest
+    // event of this type, plus how many total events of this type they have
+    // in the current scope — the per-status counterpart to `latestPerUser`
+    // above, with an added per-user event count for the expand affordance.
+    const groupByUser =
+      !expandUserId &&
+      (req.query.groupByUser === "true" || req.query.groupByUser === "1");
+
+    if (groupByUser) {
+      const [alerts, userTotals] = await Promise.all([
+        Checklist.aggregate([
+          { $match: rawMatchFilter },
+          { $sort: { createdAt: -1 } },
+          {
+            $group: {
+              _id: "$user",
+              checklist: { $first: "$$ROOT" },
+              eventCount: { $sum: 1 },
+            },
+          },
+          {
+            $replaceRoot: {
+              newRoot: { $mergeObjects: ["$checklist", { eventCount: "$eventCount" }] },
+            },
+          },
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limit },
+          {
+            $lookup: {
+              from: "users",
+              localField: "user",
+              foreignField: "_id",
+              as: "user",
+            },
+          },
+          {
+            $unwind: {
+              path: "$user",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $addFields: {
+              userName: "$user.name",
+              userId: "$user.userId",
+              alertType: "$status",
+            },
+          },
+        ]),
+        Checklist.aggregate([
+          { $match: rawMatchFilter },
+          { $group: { _id: "$user" } },
+          { $count: "count" },
+        ]),
+      ]);
+
+      const total = userTotals[0]?.count || 0;
+
+      return sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Alerts fetched successfully",
+        data: {
+          alerts,
+          pagination: {
+            page,
+            limit,
+            total,
+            totalPages: Math.max(Math.ceil(total / limit), 1),
+          },
+        },
+      });
     }
 
     const [alerts, total] = await Promise.all([
@@ -851,7 +978,7 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
   } else {
     // No explicit range selected — default the main table to today only,
     // matching the summary-card counts' own default (see `cardCountFilter`).
-    checklistFilter.workDate = getRequestDateContext(req).workDate;
+    Object.assign(checklistFilter, buildGuardLocalTodayFilter());
   }
 
   if (userId && userId !== "all") {
@@ -954,7 +1081,7 @@ export const getAdminAlerts = catchAsync(async (req, res) => {
     if (dateFrom) cardCountFilter.workDate.$gte = dateFrom;
     if (dateTo) cardCountFilter.workDate.$lte = dateTo;
   } else {
-    cardCountFilter.workDate = getRequestDateContext(req).workDate;
+    Object.assign(cardCountFilter, buildGuardLocalTodayFilter());
   }
 
   const [alerts, countResult, cardCountResult] = await Promise.all([
